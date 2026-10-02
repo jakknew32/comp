@@ -29,6 +29,23 @@ from .lineart import convert, imgio, text
 
 logger = logging.getLogger("coloring_book")
 
+
+def _log_font_status() -> None:
+    """แจ้งเตือนตอนเริ่มเซิร์ฟเวอร์ว่าฟอนต์พร้อมใช้หรือไม่
+
+    ถ้า libraqm ไม่ได้ติดตั้งมา ข้อความไทยจะซ้อนกันผิดตำแหน่งโดยไม่มี error
+    ผู้ใช้จะเห็นเป็นภาพที่ผิดรูปโดยไม่ทราบสาเหตุ
+    จึงต้องขึ้น log ระดับ error ให้เห็นเด่นชัดในหน้า Deploy ของ Render
+    """
+    try:
+        text.check_setup()
+        logger.info("ตรวจสอบฟอนต์ผ่าน พร้อมวาดข้อความภาษาไทยได้")
+    except text.FontUnavailableError as exc:
+        logger.error("ระบบวาดข้อความไทยไม่พร้อม: %s", exc)
+
+
+_log_font_status()
+
 app = FastAPI(title="โปรแกรมสร้างสมุดระบายสี A4", version="1.0.0")
 
 # ผลลัพธ์ของแต่ละไฟล์ ใช้ซ้ำได้ตามชุดพารามิเตอร์ เพื่อไม่ต้องประมวลผลซ้ำ

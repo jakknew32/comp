@@ -1,0 +1,15 @@
+# ตั้งค่า Render สำหรับโปรแกรมสร้างสมุดระบายสี
+#
+# ใช้ Docker เพราะต้องติดตั้ง libraqm เพิ่มเติม
+# ซึ่งเป็นแพ็กเกจระดับระบบปกติ pip ติดตั้งไม่ได้
+# รายละเอียดของเหตุผลอยู่ใน Dockerfile
+
+services:
+  - type: web
+    name: coloring-book
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    plan: free
+    autoDeploy: true

@@ -1,0 +1,28 @@
+# ไฟล์ที่ไม่จำเป็นต่อการทำงานบนเซิร์ฟเวอร์
+.git
+.gitignore
+.kilo
+
+# ผลลัพธ์เทสต์และ cache ของ Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# สภาพแวดล้อมเสมือนและตัวแปรลับ
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# โฟลเดอร์ coloring-book/ เป็นสำเนาโค้ดชุดเก่าที่ไม่ได้ใช้งาน
+# โค้ดที่ใช้งานจริงอยู่ที่ app/ static/ และ fonts/ ระดับราก
+coloring-book/
+
+# เอกสารและไฟล์ตัวอย่าง ไม่ต้องขึ้นเซิร์ฟเวอร์
+tests/
+samples/
+*.md
+!fonts/OFL.txt

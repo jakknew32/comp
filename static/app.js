@@ -47,7 +47,28 @@ const dom = {
   status: el("status"),
   previewWrap: el("previewWrap"),
   previewImg: el("previewImg"),
+  broken: el("broken"),
+  brokenDetail: el("brokenDetail"),
 };
+
+/** ตรวจว่าเซิร์ฟเวอร์พร้อมวาดข้อความไทยหรือไม่
+
+ * ถ้าเซิร์ฟเวอร์ไม่มี libraqm ข้อความไทยจะซ้อนกันผิดตำแหน่ง
+ * ผู้ใช้เห็นเป็นภาพผิดรูปแต่ไม่รู้สาเหตุ จึงต้องเตือนให้ชัดตั้งแต่เปิดหน้าเว็บ
+ */
+async function checkHealth() {
+  try {
+    const response = await fetch("/api/health");
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.fonts_ready) return;
+    dom.brokenDetail.textContent =
+      data.font_error || "ไม่ทราบสาเหตุ กรุณาตรวจสอบ log ของเซิร์ฟเวอร์";
+    dom.broken.hidden = false;
+  } catch (_) {
+    // ติดต่อเซิร์ฟเวอร์ไม่ได้ แสดงว่าเครื่องยังไม่พร้อมใช้งานอยู่แล้ว
+  }
+}
 
 /* ---------- การแสดงผล ---------- */
 
@@ -378,6 +399,7 @@ function init() {
   syncLabels();
   renderItems();
   setBusy(false);
+  checkHealth();
 }
 
 init();
