@@ -445,14 +445,28 @@ async function makeBook() {
     }
 
     const blob = await response.blob();
+    
+    // ลองดาวน์โหลดอัตโนมัติ
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = downloadName(response);
     document.body.appendChild(link);
     link.click();
     link.remove();
-    // ปล่อย URL หลังเบราว์เซอร์เริ่มดาวน์โหลดแล้ว
     setTimeout(() => URL.revokeObjectURL(link.href), 30000);
+
+    // Fallback: แสดงลิงก์ดาวน์โหลดสำรอง เผื่อ browser block
+    const fallbackUrl = URL.createObjectURL(blob);
+    const fallbackLink = document.createElement("a");
+    fallbackLink.href = fallbackUrl;
+    fallbackLink.download = downloadName(response);
+    fallbackLink.textContent = "🔗 ดาวน์โหลด PDF (คลิกขวา > Save link as...)";
+    fallbackLink.style.cssText = "display:inline-block;margin-top:8px;padding:8px 12px;background:#eef6f1;border:1px solid #2f6f4e;border-radius:6px;color:#2f6f4e;text-decoration:none;font-size:14px;";
+    const existing = document.getElementById("fallbackDownload");
+    if (existing) existing.remove();
+    fallbackLink.id = "fallbackDownload";
+    dom.status.insertAdjacentElement("afterend", fallbackLink);
+    setTimeout(() => URL.revokeObjectURL(fallbackUrl), 300000);
 
     const pages = response.headers.get("X-Page-Count");
     const warn = decodeHeader(response.headers.get("X-Warnings"));
