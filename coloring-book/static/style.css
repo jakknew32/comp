@@ -1,0 +1,305 @@
+:root {
+  --bg: #f6f5f2;
+  --panel: #ffffff;
+  --ink: #1d1c1a;
+  --muted: #6b6862;
+  --line: #dedbd4;
+  --accent: #2f6f4e;
+  --accent-dark: #24573d;
+  --warn-bg: #fff6e0;
+  --warn-line: #e0a83a;
+  --err-bg: #fdecec;
+  --err-line: #c94a4a;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Noto Sans Thai", "Sarabun", "Leelawadee UI", system-ui,
+               -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.6;
+}
+
+.topbar {
+  padding: 1.25rem 1.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.topbar h1 { margin: 0; font-size: 1.4rem; }
+.subtitle { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.92rem; }
+
+/* ---------- แถบเตือน ---------- */
+
+.notice {
+  margin: 0.85rem 1.5rem;
+  padding: 0.7rem 0.95rem;
+  border-radius: var(--radius);
+  border-left: 5px solid;
+  font-size: 0.92rem;
+}
+
+.notice-scope {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+}
+
+.notice-error {
+  background: var(--err-bg);
+  border-color: var(--err-line);
+}
+
+/* ---------- เลย์เอาต์ ---------- */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+  gap: 1rem;
+  padding: 0 1.5rem 2rem;
+  align-items: start;
+}
+
+.panel-wide { grid-column: 1 / -1; }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem 1.25rem;
+}
+
+.panel h2 {
+  margin: 0 0 0.85rem;
+  font-size: 1.05rem;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 0.4rem;
+}
+
+/* ---------- พื้นที่ลากวาง ---------- */
+
+.dropzone {
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 1.5rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  background: #fbfaf8;
+  transition: border-color .15s, background .15s;
+}
+
+.dropzone:hover,
+.dropzone:focus-visible { border-color: var(--accent); background: #f4faf6; }
+
+.dropzone.dragover {
+  border-color: var(--accent);
+  background: #e9f5ee;
+  border-style: solid;
+}
+
+.dz-title { margin: 0 0 0.35rem; font-weight: 600; }
+.dz-sub { margin: 0 0 0.85rem; color: var(--muted); font-size: 0.85rem; }
+
+/* ---------- รายการไฟล์ ---------- */
+
+.muted { color: var(--muted); font-size: 0.87rem; }
+
+.file-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.file-item {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  gap: 0.7rem;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.6rem;
+  background: #fdfcfb;
+}
+
+.thumb {
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.file-meta { min-width: 0; }
+
+.file-name {
+  font-size: 0.82rem;
+  color: var(--muted);
+  word-break: break-all;
+  margin-bottom: 0.3rem;
+}
+
+.file-name b { color: var(--ink); font-weight: 600; }
+
+.caption-input {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.caption-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.badge {
+  display: inline-block;
+  margin-top: 0.35rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  border: 1px solid;
+}
+
+.badge-ok { background: #e9f5ee; border-color: var(--accent); color: var(--accent-dark); }
+.badge-warn { background: var(--warn-bg); border-color: var(--warn-line); color: #7a5a10; }
+
+.badge-note { display: block; margin-top: 0.25rem; font-size: 0.75rem; color: var(--muted); }
+
+.icon-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.icon-btn:hover { border-color: var(--err-line); color: var(--err-line); }
+
+/* ---------- ตัวควบคุม ---------- */
+
+.control { margin-bottom: 1rem; }
+
+.control label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.value {
+  font-weight: 500;
+  color: var(--accent-dark);
+  background: #e9f5ee;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.hint { margin: 0.25rem 0 0; font-size: 0.78rem; color: var(--muted); }
+
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+select, input[type="text"] {
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.9rem;
+  background: #fff;
+}
+
+select:focus, input[type="text"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.toggles {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem 0.8rem;
+  margin: 0.9rem 0 1.1rem;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.toggle input { accent-color: var(--accent); }
+
+/* ---------- ปุ่ม ---------- */
+
+.actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+
+.btn {
+  padding: 0.55rem 1rem;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-dark); }
+
+.btn-secondary { background: #fff; color: var(--ink); border-color: var(--line); }
+.btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-dark); }
+
+.status { margin: 0.85rem 0 0; font-size: 0.86rem; min-height: 1.3em; }
+.status-err { color: var(--err-line); }
+.status-ok { color: var(--accent-dark); }
+
+/* ---------- ตัวอย่าง ---------- */
+
+.preview-wrap {
+  display: flex;
+  justify-content: center;
+  background: #eceae5;
+  border-radius: var(--radius);
+  padding: 1rem;
+  min-height: 200px;
+}
+
+#preview {
+  max-width: 100%;
+  max-height: 78vh;
+  background: #fff;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, .16);
+}
+
+footer {
+  padding: 1rem 1.5rem 2rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: center;
+}

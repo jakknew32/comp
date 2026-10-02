@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>โปรแกรมสร้างสมุดระบายสี A4</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>สมุดระบายสี A4</h1>
+  <p class="sub">ลากภาพลายเส้นมาวาง แล้วกดสร้าง PDF ได้เลย</p>
+</header>
+
+<div id="notice" class="notice" role="status">
+  <strong>โปรแกรมนี้ทำงานกับภาพลายเส้นเท่านั้น</strong>
+  ถ้าใส่ภาพถ่ายจริง ระบบจะได้เส้นตามภาพต้นฉบับ ไม่ใช่ภาพการ์ตูนน่ารัก
+  เพราะการเปลี่ยนภาพถ่ายให้เป็นการ์ตูนต้องใช้ AI ซึ่งเวอร์ชันนี้ยังไม่มี
+</div>
+
+<main class="layout">
+  <section class="panel">
+    <div id="drop" class="dropzone" tabindex="0" role="button"
+         aria-label="เลือกหรือลากภาพมาวางที่นี่">
+      <p class="dz-main">ลากภาพมาวางที่นี่</p>
+      <p class="dz-sub">หรือ <button type="button" id="pick" class="linklike">เลือกไฟล์</button></p>
+      <p class="dz-hint">รองรับ PNG, JPG, WEBP &middot; ความละเอียดแนะนำ 1500 พิกเซลขึ้นไป</p>
+    </div>
+    <input type="file" id="picker" accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff" multiple hidden>
+
+    <div class="list-head">
+      <h2>ภาพในสมุด <span id="count" class="pill">0</span></h2>
+      <button type="button" id="clear" class="ghost" hidden>ล้างทั้งหมด</button>
+    </div>
+    <ul id="items" class="items"></ul>
+    <p id="empty" class="empty">ยังไม่มีภาพ</p>
+  </section>
+
+  <section class="panel">
+    <h2>ตั้งค่า</h2>
+
+    <label class="field">
+      <span class="field-label">ชื่อสมุด</span>
+      <input type="text" id="title" value="สมุดระบายสีของฉัน" maxlength="120">
+    </label>
+
+    <label class="field">
+      <span class="field-label">ชื่อผู้เรียบเรียง <span class="muted">(เว้นว่างได้)</span></span>
+      <input type="text" id="author" maxlength="120" placeholder="เช่น สมุดระบายสีของน้อง">
+    </label>
+
+    <label class="field">
+      <span class="field-label">จำนวนภาพต่อหน้า</span>
+      <select id="perPage"></select>
+    </label>
+
+    <label class="field slider">
+      <span class="field-label">
+        ความหนาเส้น <output id="lineOut">อัตโนมัติ</output>
+      </span>
+      <input type="range" id="line" min="0" max="8" step="0.5" value="0">
+      <span class="scale"><span>บาง</span><span>หนา</span></span>
+    </label>
+
+    <label class="field slider">
+      <span class="field-label">
+        ความไวต่อจุดรบกวน <output id="speckleOut">อัตโนมัติ</output>
+      </span>
+      <input type="range" id="speckle" min="0" max="5" step="1" value="0">
+      <span class="scale"><span>เก็บจุดเล็ก</span><span>ล้างจุดเล็ก</span></span>
+    </label>
+
+    <div class="toggles">
+      <label class="check"><input type="checkbox" id="frame" checked> ใส่กรอบมุมมน</label>
+      <label class="check"><input type="checkbox" id="cover" checked> มีหน้าปก</label>
+      <label class="check"><input type="checkbox" id="caption" checked> มีชื่อกำกับ</label>
+      <label class="check"><input type="checkbox" id="pagenum" checked> มีเลขหน้า</label>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="previewBtn" disabled>ดูตัวอย่างหน้า A4</button>
+      <button type="button" id="makeBtn" class="primary" disabled>สร้าง PDF</button>
+    </div>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <div id="previewWrap" class="preview-wrap" hidden>
+      <h3>ตัวอย่าง</h3>
+      <img id="previewImg" alt="ตัวอย่างหน้า A4">
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  หน้ากระดาษ A4 &middot; 300 DPI &middot; เส้นดำบนพื้นขาว &middot; พิมพ์แล้วระบายสีด้วยหมวกได้เลย
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

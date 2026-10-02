@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>โปรแกรมสร้างสมุดระบายสี A4</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <h1>โปรแกรมสร้างสมุดระบายสี A4</h1>
+  <p class="subtitle">ลากภาพลายเส้นเข้ามา → โปรแกรมจัดการเองทั้งหมด → ดาวน์โหลด PDF พร้อมพิมพ์</p>
+</header>
+
+<!-- แถบเตือนขอบเขต: ต้องเห็นชัดตั้งแต่แรก ไม่ใช่หลังเห็นผลลัพธ์แล้วค่อยรู้สึกว่าทำงานผิด -->
+<div id="scope-warning" class="notice notice-scope" role="alert">
+  <strong>กรุณาทราบ:</strong>
+  <span id="scope-text">โปรแกรมนี้ทำงานกับภาพลายเส้นเท่านั้น — ภาพถ่ายจริงจะได้เส้นตามภาพ ไม่ใช่การ์ตูนน่ารัก</span>
+</div>
+
+<div id="shaping-warning" class="notice notice-error" role="alert" hidden></div>
+
+<main class="layout">
+
+  <!-- ================= ซ้าย: ไฟล์และรายการภาพ ================= -->
+  <section class="panel">
+    <h2>1. ภาพต้นฉบับ</h2>
+
+    <div id="dropzone" class="dropzone" tabindex="0" role="button"
+         aria-label="ลากวางรูปภาพที่นี่ หรือกดเพื่อเลือกไฟล์">
+      <p class="dz-title">ลากรูปมาวางที่นี่</p>
+      <p class="dz-sub">รองรับ JPEG / PNG / WEBP — สูงสุด 25 MB ต่อไฟล์<br>
+        ชื่อไฟล์ภาษาไทยและชื่อที่มีช่องว่างใช้ได้</p>
+      <button type="button" id="pick-files" class="btn btn-secondary">เลือกไฟล์</button>
+      <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp" multiple hidden>
+    </div>
+
+    <p id="file-summary" class="muted" aria-live="polite"></p>
+
+    <ul id="file-list" class="file-list"></ul>
+  </section>
+
+  <!-- ================= ขวา: ตั้งค่าและผลลัพธ์ ================= -->
+  <section class="panel">
+    <h2>2. ตั้งค่า</h2>
+
+    <div class="control">
+      <label for="target-line">
+        ความหนาเส้น <span class="value" id="target-line-value">อัตโนมัติ</span>
+      </label>
+      <input type="range" id="target-line" min="1" max="5" step="0.1" value="2.5">
+      <p class="hint">ค่าว่าง/อัตโนมัติ = ให้โปรแกรมวัดจากภาพแล้วตั้งให้เอง</p>
+    </div>
+
+    <div class="control">
+      <label for="despeckle">
+        ความไวต่อจุดรบกวน <span class="value" id="despeckle-value">อัตโนมัติ</span>
+      </label>
+      <input type="range" id="despeckle" min="0" max="1" step="0.05" value="0">
+      <p class="hint">ค่าสูง = ตัดจุดเล็ก ๆ ทิ้งมากขึ้น (ระวังก้อนทึบเช่นตาของการ์ตูน)</p>
+    </div>
+
+    <div class="control">
+      <label for="per-page">ภาพต่อหน้า <span class="value" id="per-page-value">1</span></label>
+      <select id="per-page">
+        <option value="1" selected>1 ภาพ (เต็มหน้า)</option>
+        <option value="2">2 ภาพ (1×2)</option>
+        <option value="4">4 ภาพ (2×2)</option>
+        <option value="6">6 ภาพ (2×3)</option>
+        <option value="9">9 ภาพ (3×3)</option>
+        <option value="12">12 ภาพ (3×4)</option>
+      </select>
+    </div>
+
+    <div class="control">
+      <label for="book-title">ชื่อสมุด (แสดงบนหน้าปก)</label>
+      <input type="text" id="book-title" value="สมุดระบายสีของฉัน" maxlength="80">
+    </div>
+
+    <div class="control">
+      <label for="author">ชื่อเจ้าของ (ถ้าต้องการ)</label>
+      <input type="text" id="author" value="" maxlength="60" placeholder="เว้นว่างไว้ก็ได้">
+    </div>
+
+    <div class="toggles">
+      <label class="toggle">
+        <input type="checkbox" id="opt-frame" checked> กรอบมุมมน
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="opt-cover" checked> หน้าปก
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="opt-captions" checked> ชื่อกำกับใต้ภาพ
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="opt-page-numbers" checked> เลขหน้า
+      </label>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="regen" class="btn btn-secondary">สร้างใหม่ (ดูตัวอย่าง)</button>
+      <button type="button" id="download" class="btn btn-primary" disabled>ดาวน์โหลด PDF</button>
+    </div>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <!-- ================= ตัวอย่าง ================= -->
+  <section class="panel panel-wide">
+    <h2>3. ตัวอย่างหน้า A4</h2>
+    <p class="muted" id="preview-note">เลือกไฟล์เพื่อดูตัวอย่าง</p>
+    <div class="preview-wrap">
+      <img id="preview" alt="ตัวอย่างหน้า A4 ที่จะพิมพ์" hidden>
+    </div>
+    <p class="muted" id="auto-info"></p>
+  </section>
+
+</main>
+
+<footer>
+  <p>ออกแบบสำหรับพิมพ์ที่ A4 300 DPI · ไม่มีการส่งภาพออกนอกเครื่อง (ประมวลผลในหน่วยความจำ)</p>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
