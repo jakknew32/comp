@@ -143,15 +143,15 @@ def _cache_key(raw: bytes, params: LineArtParams) -> str:
 
 def convert_uploaded(
     raw: bytes, filename: str, params: LineArtParams
-) -> tuple[convert.ConvertResult, str, str]:
+) -> tuple[convert.ConvertResult, np.ndarray, str, str]:
     """แปลงไฟล์ที่อัปโหลด ใช้แคชถ้าเคยประมวลผลด้วยค่าเดิม
 
-    คืน (ผลลัพธ์, ชื่อกำกับเริ่มต้น, ข้อความเตือนรวม)
+    คืน (ผลลัพธ์, ภาพต้นฉบับสี, ชื่อกำกับเริ่มต้น, ข้อความเตือนรวม)
     """
     key = _cache_key(raw, params)
     cached = _CACHE.get(key)
     if cached is not None:
-        return cached, imgio.caption_from_filename(filename), ""
+        return cached, None, imgio.caption_from_filename(filename), ""
 
     image = imgio.load_upload(raw, filename)
     notes: list[str] = []
@@ -169,7 +169,7 @@ def convert_uploaded(
         _CACHE.pop(next(iter(_CACHE)))
     _CACHE[key] = result
 
-    return result, imgio.caption_from_filename(filename), " | ".join(notes)
+    return result, image, imgio.caption_from_filename(filename), " | ".join(notes)
 
 
 @lru_cache(maxsize=1)
@@ -258,7 +258,7 @@ async def preview(
 
     raw = await read_upload(file)
     try:
-        result, caption, _ = convert_uploaded(raw, file.filename or "ภาพ", lp)
+        result, _, caption, _ = convert_uploaded(raw, file.filename or "ภาพ", lp)
     except imgio.ImageLoadError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -309,7 +309,7 @@ async def make_book(
         raw = await read_upload(upload)
         name = upload.filename or f"ภาพที่ {index + 1}"
         try:
-            result, default_caption, warn = convert_uploaded(raw, name, lp)
+            result, original_image, default_caption, warn = convert_uploaded(raw, name, lp)
         except imgio.ImageLoadError as exc:
             skipped.append(f"{name}: {exc}")
             continue
