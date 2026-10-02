@@ -20,7 +20,7 @@
 <div id="notice" class="notice" role="status">
   <strong>โปรแกรมนี้ทำงานกับภาพลายเส้นเท่านั้น</strong>
   ถ้าใส่ภาพถ่ายจริง ระบบจะได้เส้นตามภาพต้นฉบับ ไม่ใช่ภาพการ์ตูนน่ารัก
-  เพราะการเปลี่ยนภาพถ่ายให้เป็นการ์ตูนต้องใช้ AI ซึ่งเวอร์ชันนี้ยังไม่มี
+  เว้นแต่จะเปิดใช้ AI ด้านล่าง (ถ้าเจ้าของเซิร์ฟเวอร์ตั้งค่าไว้)
 </div>
 
 <main class="layout">
@@ -82,6 +82,14 @@
       <label class="check"><input type="checkbox" id="cover" checked> มีหน้าปก</label>
       <label class="check"><input type="checkbox" id="caption" checked> มีชื่อกำกับ</label>
       <label class="check"><input type="checkbox" id="pagenum" checked> มีเลขหน้า</label>
+    </div>
+
+    <div id="aiBox" class="ai-box" hidden>
+      <label class="check">
+        <input type="checkbox" id="useAi">
+        ใช้ AI ช่วยแปลงภาพถ่ายเป็นภาพการ์ตูน
+      </label>
+      <p class="hint" id="aiHint"></p>
     </div>
 
     <div class="actions">

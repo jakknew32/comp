@@ -81,6 +81,7 @@ class LineArtParams:
     xdog_phi: float | None = 18.0
     close_iterations: int = 1
     strip_border: bool = True
+    use_ai: bool = False
     max_long_edge: int = 1400
 
     def to_dict(self) -> dict:

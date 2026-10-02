@@ -229,6 +229,16 @@ output {
 .toggles { display: grid; gap: 6px; margin: 4px 0 16px; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 
+.ai-box {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.ai-box .hint { margin: 6px 0 0 24px; }
+
 .actions { display: flex; gap: 8px; }
 
 button {

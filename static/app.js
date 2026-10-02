@@ -49,7 +49,36 @@ const dom = {
   previewImg: el("previewImg"),
   broken: el("broken"),
   brokenDetail: el("brokenDetail"),
+  aiBox: el("aiBox"),
+  useAi: el("useAi"),
+  aiHint: el("aiHint"),
+  notice: el("notice"),
 };
+
+/** แสดงตัวเลือก AI เฉพาะเมื่อเจ้าของเซิร์ฟเวอร์ตั้งค่าไว้แล้ว
+
+ * ต้องบอกเรื่องค่าใช้จ่ายและการส่งภาพออกนอกเครื่องให้ชัดเจน
+ * ผู้ใช้ต้องตัดสินใจอย่างรู้ตัวก่อนกดใช้
+ */
+function applyAiStatus(status) {
+  if (!status || !status.configured) {
+    dom.aiBox.hidden = true;
+    return;
+  }
+  const cost = status.estimated_cost_per_image_usd;
+  dom.aiBox.hidden = false;
+  dom.aiHint.textContent =
+    "ใช้เฉพาะกับภาพถ่ายเท่านั้น ภาพลายเส้นจะไม่ถูกส่งให้ AI" +
+    (cost ? " · ค่าใช้จ่ายประมาณ " + cost + " USD ต่อภาพ" : "") +
+    " · ภาพจะถูกส่งออกนอกเครื่องนี้ผ่านผู้ให้บริการ AI";
+
+  // เมื่อมี AI ให้ใช้ ให้เตือนเรื่องข้อจำกัดเดิมน้อยลง
+  dom.notice.querySelector("strong").textContent =
+    "โปรแกรมนี้ทำงานดีที่สุดกับภาพลายเส้น";
+  dom.notice.lastChild.textContent =
+    " ภาพถ่ายจะได้เส้นตามภาพต้นฉบับเป็นค่าเริ่มต้น " +
+    "หากอยากได้ภาพการ์ตูนให้เปิดใช้ AI ด้านล่าง";
+}
 
 /** ตรวจว่าเซิร์ฟเวอร์พร้อมวาดข้อความไทยหรือไม่
 
@@ -61,6 +90,9 @@ async function checkHealth() {
     const response = await fetch("/api/health");
     if (!response.ok) return;
     const data = await response.json();
+
+    if (data.ai) applyAiStatus(data.ai);
+
     if (data.fonts_ready) return;
     dom.brokenDetail.textContent =
       data.font_error || "ไม่ทราบสาเหตุ กรุณาตรวจสอบ log ของเซิร์ฟเวอร์";
@@ -286,6 +318,7 @@ function lineArtPayload() {
   return {
     target_line_mm: line === 0 ? null : line,
     speckle_ratio: SPECKLE_STEPS[speckleIndex],
+    use_ai: dom.useAi.checked,
   };
 }
 

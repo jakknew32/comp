@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from functools import lru_cache
 from typing import Annotated
 
 import numpy as np
@@ -17,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
+from . import ai
 from .book import pdf as book_pdf
 from .config import (
     GRID_OPTIONS,
@@ -68,6 +70,7 @@ class LineArtPayload(BaseModel):
     xdog_phi: float | None = Field(default=None, ge=1.0, le=60.0)
     close_iterations: int = Field(default=1, ge=0, le=4)
     strip_border: bool = True
+    use_ai: bool = False
 
 
 class BookPayload(BaseModel):
@@ -93,6 +96,7 @@ def to_lineart_params(payload: LineArtPayload | None) -> LineArtParams:
         xdog_phi=payload.xdog_phi,
         close_iterations=payload.close_iterations,
         strip_border=payload.strip_border,
+        use_ai=payload.use_ai,
     )
 
 
@@ -150,13 +154,28 @@ def convert_uploaded(
         return cached, imgio.caption_from_filename(filename), ""
 
     image = imgio.load_upload(raw, filename)
+    notes: list[str] = []
+
+    if params.use_ai:
+        outcome = ai.enhance(image, _ai_settings(), True)
+        if outcome.note:
+            notes.append(outcome.note)
+        image = outcome.image
+
     result = convert.convert(image, params)
+    notes.extend(result.warnings)
 
     if len(_CACHE) >= _CACHE_LIMIT:
         _CACHE.pop(next(iter(_CACHE)))
     _CACHE[key] = result
 
-    return result, imgio.caption_from_filename(filename), " | ".join(result.warnings)
+    return result, imgio.caption_from_filename(filename), " | ".join(notes)
+
+
+@lru_cache(maxsize=1)
+def _ai_settings() -> ai.AiSettings:
+    """อ่านค่าตั้งค่�� AI เก็บไว้เพื่อไม่ต้องอ่านซ้ำทุกรูป"""
+    return ai.load_settings()
 
 
 async def read_upload(upload: UploadFile) -> bytes:
@@ -200,6 +219,7 @@ def health() -> dict:
         "fonts_ready": fonts_ok,
         "font_error": font_error,
         "grids": sorted(GRID_OPTIONS),
+        "ai": ai.status(_ai_settings()),
     }
 
 
