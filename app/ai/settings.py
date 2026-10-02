@@ -8,19 +8,24 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from enum import Enum
 
 # ตัวแปรแวดล้อมที่ใช้ตั้งค่า
+ENV_AI_PROVIDER = "AI_PROVIDER"
 ENV_API_KEY = "AI_API_KEY"
+ENV_HF_TOKEN = "HF_TOKEN"
 ENV_MODEL = "AI_MODEL"
+ENV_HF_MODEL = "AI_HF_MODEL"
 ENV_BASE_URL = "AI_BASE_URL"
 ENV_TIMEOUT = "AI_TIMEOUT_SECONDS"
 
 DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
+DEFAULT_HF_MODEL = "lineart_sd15"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_TIMEOUT = 90.0
 
 # ประมาณการค่าใช้จ่ายต่อหนึ่งภาพ ใช้แสดงในหน้าเว็บให้ผู้ใช้ตัดสินใจ
-# ตัวเลขนี้มาจากหน้าราคาของ Google ณ เวลาที่เขียนโค้ด และอาจเปลี่ยนได้
+# ตัวเลขนี้มาจากหน้าราคาของ Google/Hugging Face ณ เวลาที่เขียนโค้ด และอาจเปลี่ยนได้
 # จึงต้องบอกผู้ใช้เสมอว่าให้เช็คราคาล่าสุดที่ต้นทาง
 ESTIMATED_COST_PER_IMAGE_USD = 0.067
 
@@ -33,30 +38,51 @@ PROMPT_TH = (
 )
 
 
+class AiProvider(str, Enum):
+    """ผู้ให้บริการ AI"""
+    GEMINI = "gemini"
+    HUGGINGFACE = "huggingface"
+
+
 @dataclass
 class AiSettings:
     """ผลการอ่านตั้งค่า AI จากสภาพแวดล้อม"""
 
-    api_key: str | None
-    model: str
-    base_url: str
-    timeout: float
+    provider: AiProvider = AiProvider.GEMINI
+    api_key: str | None = None
+    hf_token: str | None = None
+    model: str = DEFAULT_MODEL
+    hf_model: str = "lineart_sd15"
+    base_url: str = DEFAULT_BASE_URL
+    timeout: float = DEFAULT_TIMEOUT
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key)
+        if self.provider == AiProvider.GEMINI:
+            return bool(self.api_key)
+        if self.provider == AiProvider.HUGGINGFACE:
+            return bool(self.hf_token)
+        return False
 
     def describe_missing(self) -> str:
-        return (
-            f"ยังไม่ได้ตั้งค่า AI: ไม่พบตัวแปรแวดล้อม {ENV_API_KEY} "
-            "ต้องใส่คีย์ของผู้ให้บริการในการตั้งค่าของ Render"
-        )
+        if self.provider == AiProvider.GEMINI:
+            return (
+                f"ยังไม่ได้ตั้งค่า AI: ไม่พบตัวแปรแวดล้อม {ENV_API_KEY} "
+                "ต้องใส่คีย์ของผู้ให้บริการในการตั้งค่าของ Render"
+            )
+        if self.provider == AiProvider.HUGGINGFACE:
+            return (
+                f"ยังไม่ได้ตั้งค่า Hugging Face AI: ไม่พบตัวแปรแวดล้อม {ENV_HF_TOKEN} "
+                "ต้องใส่ HF_TOKEN ในการตั้งค่าของ Render"
+            )
+        return "ไม่ทราบผู้ให้บริการ AI"
 
     def masked_key(self) -> str:
-        if not self.api_key:
-            return ""
-        tail = self.api_key[-4:]
-        return "***" + tail
+        if self.provider == AiProvider.GEMINI and self.api_key:
+            return "***" + self.api_key[-4:]
+        if self.provider == AiProvider.HUGGINGFACE and self.hf_token:
+            return "***" + self.hf_token[-4:]
+        return ""
 
 
 def load_settings(env: dict | None = None) -> AiSettings:
@@ -66,8 +92,21 @@ def load_settings(env: dict | None = None) -> AiSettings:
     """
     source = os.environ if env is None else env
 
-    key = (source.get(ENV_API_KEY) or "").strip() or None
+    provider_str = (source.get(ENV_AI_PROVIDER) or "gemini").strip().lower()
+    try:
+        provider = AiProvider(provider_str)
+    except ValueError:
+        provider = AiProvider.GEMINI
+
+    if provider == AiProvider.HUGGINGFACE:
+        hf_token = (source.get(ENV_HF_TOKEN) or "").strip() or None
+        api_key = None
+    else:
+        api_key = (source.get(ENV_API_KEY) or "").strip() or None
+        hf_token = (source.get(ENV_HF_TOKEN) or "").strip() or None
+
     model = (source.get(ENV_MODEL) or "").strip() or DEFAULT_MODEL
+    hf_model = (source.get("AI_HF_MODEL") or "").strip() or "lineart_sd15"
     base_url = (source.get(ENV_BASE_URL) or "").strip() or DEFAULT_BASE_URL
     base_url = base_url.rstrip("/")
 
@@ -79,8 +118,11 @@ def load_settings(env: dict | None = None) -> AiSettings:
     timeout = min(max(timeout, 5.0), 300.0)
 
     return AiSettings(
-        api_key=key,
+        provider=provider,
+        api_key=api_key,
+        hf_token=hf_token,
         model=model,
+        hf_model=hf_model,
         base_url=base_url,
         timeout=timeout,
     )

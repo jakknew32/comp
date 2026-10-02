@@ -82,6 +82,8 @@ class LineArtParams:
     close_iterations: int = 1
     strip_border: bool = True
     use_ai: bool = False
+    ai_provider: str = "gemini"
+    ai_model: str | None = None
     max_long_edge: int = 1400
 
     def to_dict(self) -> dict:

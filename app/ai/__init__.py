@@ -16,17 +16,19 @@ from __future__ import annotations
 import numpy as np
 
 from ..lineart import detect
-from . import gemini
+from . import gemini, huggingface
 from .gemini import AiError
 from .settings import (
     ESTIMATED_COST_PER_IMAGE_USD,
     PROMPT_TH,
+    AiProvider,
     AiSettings,
     load_settings,
 )
 
 __all__ = [
     "AiError",
+    "AiProvider",
     "AiSettings",
     "load_settings",
     "PROMPT_TH",
@@ -65,8 +67,20 @@ def status(settings: AiSettings) -> dict:
     หน้าเว็บต้องซ่อนตัวเลือกนี้เมื่อยังตั้งค่าไม่เรียบร้อย
     ไม่ให้ผู้ใช้กดแล้วล้มเหลวโดยไม่รู้ตัว
     """
+    if settings.provider == AiProvider.HUGGINGFACE:
+        return {
+            "configured": settings.configured,
+            "provider": "huggingface",
+            "model": settings.hf_model if settings.configured else None,
+            "estimated_cost_per_image_usd": (
+                0.0 if settings.configured else None
+            ),
+            "message": None if settings.configured else settings.describe_missing(),
+        }
+
     return {
         "configured": settings.configured,
+        "provider": "gemini",
         "model": settings.model if settings.configured else None,
         "estimated_cost_per_image_usd": (
             ESTIMATED_COST_PER_IMAGE_USD if settings.configured else None
@@ -96,11 +110,38 @@ def enhance(
     settings: AiSettings,
     enabled: bool,
     prompt: str = PROMPT_TH,
-) -> AiOutcome:
+    provider: AiProvider | None = None,
+    model: str | None = None,
+) -> "AiOutcome":
     """พยายามแปลงภาพด้วย AI โดยไม่ทำให้ขั้นตอนอื่นล้มเหลว
 
     คืนภาพเดิมกลับไปเสมอถ้า AI ใช้ไม่ได้ พร้อมข้อความอธิบาย
     """
+    if not enabled:
+        return AiOutcome(False, image)
+
+    # ใช้ provider/model จากพารามิเตอร์ ถ้าระบุ มิฉะนั้นใช้จาก settings
+    effective_provider = provider if provider is not None else settings.provider
+    effective_model = model if model is not None else (
+        settings.hf_model if settings.provider == AiProvider.HUGGINGFACE else settings.model
+    )
+
+    # สร้าง settings ชั่วคราวสำหรับการเรียกครั้งนี้
+    effective_settings = AiSettings(
+        provider=AiProvider(effective_provider),
+        api_key=settings.api_key,
+        hf_token=settings.hf_token,
+        model=settings.model,
+        hf_model=settings.hf_model,
+        base_url=settings.base_url,
+        timeout=settings.timeout,
+    )
+    # Override model for the specific provider
+    if effective_provider == AiProvider.HUGGINGFACE:
+        effective_settings.hf_model = model or settings.hf_model
+    else:
+        effective_settings.model = model or settings.model
+
     if not enabled:
         return AiOutcome(False, image)
 
@@ -111,9 +152,14 @@ def enhance(
         return AiOutcome(False, image)
 
     try:
-        # เรียกผ่านชื่อโมดูล ไม่ใช่ชื่อที่ import มาโดยตรง
-        # เพื่อให้เทสต์สามารถแทนที่จุดนี้ได้ และกันไม่ให้เทสต์ยิงเครือข่ายจริง
-        converted = gemini.convert_to_lineart(image, settings, prompt)
+        if effective_provider == AiProvider.HUGGINGFACE:
+            from . import huggingface
+            converted = huggingface.hf_convert_to_lineart(
+                image, effective_settings, prompt=prompt, model_key=effective_settings.hf_model
+            )
+        else:
+            from . import gemini
+            converted = gemini.convert_to_lineart(image, effective_settings, prompt)
     except AiError as exc:
         return AiOutcome(False, image, f"ใช้ AI ไม่สำเร็จ: {exc}")
     except Exception as exc:  # noqa: BLE001 - ต้องกันไม่ให้ขั้นตอนอื่นพัง

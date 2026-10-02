@@ -71,6 +71,8 @@ class LineArtPayload(BaseModel):
     close_iterations: int = Field(default=1, ge=0, le=4)
     strip_border: bool = True
     use_ai: bool = False
+    ai_provider: str = "gemini"
+    ai_model: str | None = None
 
 
 class BookPayload(BaseModel):
@@ -97,6 +99,8 @@ def to_lineart_params(payload: LineArtPayload | None) -> LineArtParams:
         close_iterations=payload.close_iterations,
         strip_border=payload.strip_border,
         use_ai=payload.use_ai,
+        ai_provider=payload.ai_provider,
+        ai_model=payload.ai_model,
     )
 
 
@@ -157,7 +161,11 @@ def convert_uploaded(
     notes: list[str] = []
 
     if params.use_ai:
-        outcome = ai.enhance(image, _ai_settings(), True)
+        outcome = ai.enhance(
+            image, _ai_settings(), params.use_ai,
+            provider=params.ai_provider,
+            model=params.ai_model,
+        )
         if outcome.note:
             notes.append(outcome.note)
         image = outcome.image
