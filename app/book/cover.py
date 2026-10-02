@@ -116,8 +116,8 @@ def build_cover(
     book: BookParams,
     lineart: LineArtParams,
     total_pages: int,
-) -> Image.Image:
-    """ประกอบหน้าปก 1 หน้า"""
+) -> tuple[Image.Image, list[str]]:
+    """ประกอบหน้าปก 1 หน้า คืน (ภาพ, ข้อความเตือน)"""
     page = compose.new_page()
 
     margin = mm_to_px(PAGE_MARGIN_MM)
@@ -157,13 +157,16 @@ def build_cover(
     # หน้าปกไม่ควรมีภาพเยอะจนดูยุ่ง เก็บไว้ไม่เกิน 9 ภาพ
     count = min(len(masks), COVER_MAX_THUMBS)
     boxes = _cover_grid_boxes(grid_area, gap, count)
+    notes: list[str] = []
 
     # เส้นบนหน้าปกบางกว่าเนื้อหา เพื่อไม่ให้แย่งความสนใจจากชื่อสมุด
     target_line_px = mm_to_px((lineart.target_line_mm or 2.5) * 0.7)
 
     for index, box in enumerate(boxes):
         if index < count:
-            art = compose.place_artwork(masks[index], box, target_line_px)
+            art, note = compose.place_artwork(masks[index], box, target_line_px)
+            if note and note not in notes:
+                notes.append(note)
         else:
             art = Image.new("L", (box.w, box.h), compose.WHITE)
         page.paste(art, (box.x, box.y))
@@ -172,7 +175,7 @@ def build_cover(
     page.paste(0, (center_x - title_mask.width // 2, title_top), title_mask)
     page.paste(0, (center_x - subtitle_mask.width // 2, subtitle_top), subtitle_mask)
 
-    return compose.to_bilevel(page)
+    return compose.to_bilevel(page), notes
 
 
 def blank_cover(book: BookParams) -> Image.Image:

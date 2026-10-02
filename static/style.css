@@ -219,6 +219,13 @@ output {
   color: var(--muted);
 }
 
+.hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .toggles { display: grid; gap: 6px; margin: 4px 0 16px; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 
@@ -247,6 +254,7 @@ button.ghost { flex: none; padding: 4px 10px; font-size: 13px; color: var(--mute
 
 .status { min-height: 20px; margin: 12px 0 0; font-size: 14px; color: var(--muted); }
 .status.error { color: #b3261e; }
+.status.warn { color: #8a6d1a; }
 .status.busy::after { content: "…"; }
 
 .preview-wrap { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }

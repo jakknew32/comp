@@ -111,7 +111,7 @@ def test_frame_toggle_removes_inset() -> None:
 
 
 def test_content_page_is_a4_bilevel() -> None:
-    page = compose.render_content_page(
+    page, _ = compose.render_content_page(
         [make_mask()], ["ทดสอบ"], BookParams(per_page=1), LineArtParams(), 1
     )
     assert page.size == (A4_WIDTH_PX, A4_HEIGHT_PX)
@@ -119,20 +119,20 @@ def test_content_page_is_a4_bilevel() -> None:
 
 
 def test_page_number_appears_only_when_requested() -> None:
-    with_num = compose.render_content_page(
+    with_num, _ = compose.render_content_page(
         [make_mask()], ["ทดสอบ"], BookParams(show_page_number=True), LineArtParams(), 7
     )
-    without = compose.render_content_page(
+    without, _ = compose.render_content_page(
         [make_mask()], ["ทดสอบ"], BookParams(show_page_number=False), LineArtParams(), 7
     )
     assert ink_count(with_num) > ink_count(without)
 
 
 def test_caption_appears_only_when_requested() -> None:
-    with_cap = compose.render_content_page(
+    with_cap, _ = compose.render_content_page(
         [make_mask()], ["ชื่อกำกับ"], BookParams(show_caption=True), LineArtParams(), 0
     )
-    without = compose.render_content_page(
+    without, _ = compose.render_content_page(
         [make_mask()], ["ชื่อกำกับ"], BookParams(show_caption=False), LineArtParams(), 0
     )
     assert ink_count(with_cap) > ink_count(without)
@@ -140,10 +140,10 @@ def test_caption_appears_only_when_requested() -> None:
 
 def test_thicker_target_produces_more_ink() -> None:
     """ค่าความหนาเส้นที่มากขึ้นต้องทำให้หมึกบนหน้าเพิ่มขึ้นจริง"""
-    thin = compose.render_content_page(
+    thin, _ = compose.render_content_page(
         [make_mask()], ["x"], BookParams(), LineArtParams(target_line_mm=1.0), 0
     )
-    thick = compose.render_content_page(
+    thick, _ = compose.render_content_page(
         [make_mask()], ["x"], BookParams(), LineArtParams(target_line_mm=5.0), 0
     )
     assert ink_count(thick) > ink_count(thin)
@@ -154,7 +154,7 @@ def test_empty_slots_leave_blank_space() -> None:
     book = BookParams(per_page=4)
     boxes = compose.content_boxes(book)
     one = np.zeros((1, 1), np.uint8)
-    page = compose.render_content_page(
+    page, _ = compose.render_content_page(
         [make_mask(), one, one, one], ["มี", "", "", ""], book, LineArtParams(), 1
     )
     array = np.asarray(page.convert("L"))
@@ -167,7 +167,7 @@ def test_empty_slots_leave_blank_space() -> None:
 
 
 def test_cover_is_a4_bilevel() -> None:
-    page = cover.build_cover(
+    page, _ = cover.build_cover(
         [make_mask()], ["ทดสอบ"], BookParams(), LineArtParams(), total_pages=1
     )
     assert page.size == (A4_WIDTH_PX, A4_HEIGHT_PX)
@@ -176,7 +176,7 @@ def test_cover_is_a4_bilevel() -> None:
 
 def test_cover_handles_more_images_than_slots() -> None:
     masks = [make_mask() for _ in range(10)]
-    page = cover.build_cover(
+    page, _ = cover.build_cover(
         masks, ["ทดสอบ"] * 10, BookParams(), LineArtParams(), total_pages=10
     )
     assert page.mode == "1"

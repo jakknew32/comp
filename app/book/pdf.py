@@ -48,25 +48,33 @@ def build_book(
     for page in content_pages:
         if page.is_cover:
             total = max(0, content_pages[-1].index)
-            images.append(
-                cover.build_cover(masks, captions, book, lineart, total_pages=total)
+            cover_image, cover_notes = cover.build_cover(
+                masks, captions, book, lineart, total_pages=total
             )
+            images.append(cover_image)
+            for note in cover_notes:
+                if note not in warnings:
+                    warnings.append(note)
             continue
 
         page_masks, page_captions = layout.masks_for_page(
             page, masks, captions, book, lineart
         )
         # เลขหน้านับเฉพาะหน้าเนื้อหา ไม่นับหน้าปก
-        content_number = page.index - (1 if content_pages and content_pages[0].is_cover else 0)
-        images.append(
-            compose.render_content_page(
-                page_masks,
-                page_captions,
-                book,
-                lineart,
-                page_number=content_number,
-            )
+        content_number = page.index - (
+            1 if content_pages and content_pages[0].is_cover else 0
         )
+        image, page_notes = compose.render_content_page(
+            page_masks,
+            page_captions,
+            book,
+            lineart,
+            page_number=content_number,
+        )
+        images.append(image)
+        for note in page_notes:
+            if note not in warnings:
+                warnings.append(note)
 
     return _to_pdf(images, warnings)
 
@@ -93,8 +101,8 @@ def render_preview(
     caption: str,
     book: BookParams,
     lineart: LineArtParams,
-) -> Image.Image:
-    """สร้างภาพตัวอย่างหน้าเดียวสำหรับหน้าเว็บ
+) -> tuple[Image.Image, list[str]]:
+    """สร้างภาพตัวอย่างหน้าเดียวสำหรับหน้าเว็บ คืน (ภาพ, ข้อความเตือน)
 
     ใช้โหมดเต็มหน้าเสมอ ไม่ว่าที่ผู้ใช้เลือกโหมดกี่ภาพต่อหน้า
     เพราะเป้าหมายของตัวอย่างคือดูผลของการปรับความหนาเส้น

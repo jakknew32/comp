@@ -153,6 +153,7 @@ def dilation_for_width(current: float, target: float) -> int:
 
     dilate ด้วยเคอร์เนลวงรีที่รัศมี r จะขยายเส้นออกทั้งสองข้างรวม 2r พิกเซล
     ถ้า current >= target แล้วคืน 1 (ไม่ต้องทำอะไร) เพราะย่อเส้นด้วยวิธีนี้ไม่ได้
+    การย่อเส้นต้องใช้ rescale_stroke_width แทน
     """
     grow = target - current
     if grow <= 0.0:
@@ -162,3 +163,102 @@ def dilation_for_width(current: float, target: float) -> int:
     if size % 2 == 0:
         size += 1
     return max(1, min(size, 101))
+
+
+# ถ้าย่อเส้นแล้วส่วนประกอบของภาพลดลงเกินสัดส่วนนี้ แปลว่าเส้นขาดเป็นส่วน ๆ
+# เช่น ลายประดับเล็กที่บางกว่าเป้าหมายจะหายไปทั้งก้อน
+THIN_MAX_COMPONENT_LOSS = 0.5
+# ย่อเส้นย่อมทำให้จำนวนพิกเซลหมึกลดลงเสมอ จึงใช้เกณฑ์นี้แบบหยาบมาก
+# เพื่อกันเฉพาะกรณีที่ภาพหายไปเกือบทั้งหน้า
+THIN_MAX_INK_LOSS = 0.92
+# จำนวนรอบการชดเชยความคลาดจากการย่อ และความคลาดที่ยอมรับได้เป็นพิกเซล
+THIN_MAX_PASSES = 4
+THIN_TOLERANCE = 1.0
+
+
+@dataclass
+class RescaleResult:
+    """ผลการปรับความหนาเส้นให้ตรงเป้าหมาย"""
+
+    mask: np.ndarray
+    achieved_width: float
+    thinned: bool
+    note: str | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def rescale_stroke_width(mask: np.ndarray, target: float) -> RescaleResult:
+    """ปรับความหนาเส้นให้เท่ากับ target ทั้งหนาขึ้นและบางลง
+
+    เดิมโปรแกรมทำได้แค่หนาขึ้น ถ้าเส้นเดิมหนากว่าเป้าหมายก็ปล่อยไว้
+    ทำให้ผู้ใช้ที่มีงานเส้นหนาอยู่แล้วปรับให้บางลงไม่ได้เลย
+
+    การย่อทำโดยเก็บเฉพาะพิกเซลที่ห่างจากพื้นหลังไม่เกิน target/2
+    วิธีนี้ได้ความหนาสม่ำเสมอกว่าการกัดด้วยเคอร์เนล และไม่ทำให้เส้นเป็นเหลี่ยม
+    """
+    mask = _as_mask(mask)
+    if target <= 0 or not mask.any():
+        return RescaleResult(mask, 0.0, False)
+
+    before = measure(mask)
+    current = before.median_width
+    if current <= 0:
+        return RescaleResult(mask, 0.0, False)
+
+    if current < target:
+        kernel_size = dilation_for_width(current, target)
+        if kernel_size <= 1:
+            return RescaleResult(mask, current, False)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        grown = np.where(cv2.dilate(mask, kernel) >= 128, 255, 0).astype(np.uint8)
+        return RescaleResult(grown, target, False)
+
+    # ต้องย่อเส้น
+    # การกัดด้วยวงกลมรัศมี r คือการเก็บเฉพาะพิกเซลที่ห่างจากพื้นหลังอย่างน้อย r
+    # เส้นหนา w จึงเหลือกว้าง w - 2r ดังนั้น r = (current - target) / 2
+    # ทำด้วย distance transform ครั้งเดียวได้ผลเหมือนกัดด้วยวงกลมพอดี
+    # และได้เส้นที่หนาสม่ำเสมอกว่าการกัดด้วยเคอร์เนลสี่เหลี่ยมหรือวงรี
+    radius = max(0.0, (current - target) / 2.0)
+    if radius <= 0.0:
+        return RescaleResult(mask, current, False)
+
+    thinned = None
+    achieved = current
+    for _ in range(THIN_MAX_PASSES):
+        distance = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+        candidate = np.where(distance >= radius, 255, 0).astype(np.uint8)
+        if not candidate.any():
+            break
+        thinned = candidate
+        achieved = measure(candidate).median_width
+        # ระยะในภาพดิจิตอลมีขั้นจำกัด ผลจึงไม่ค่อยตรงเป้าเป๊ะ
+        # จึงวัดซ้ำแล้วชดเชยตามความคลาดที่พบจริง
+        error = achieved - target
+        if abs(error) <= THIN_TOLERANCE or radius <= 0.0:
+            break
+        radius = max(0.0, radius + error / 2.0)
+
+    if thinned is None:
+        return RescaleResult(mask, current, False, "ย่อเส้นจนหมด จึงคงความหนาเดิมไว้")
+
+    after = measure(thinned)
+
+    # ตรวจว่าไม่ได้ทำลายงานไปมากเกินไป
+    ink_loss = 1.0 - (float(np.count_nonzero(thinned)) / float(np.count_nonzero(mask)))
+    component_loss = 1.0
+    if before.component_count > 0:
+        component_loss = 1.0 - (after.component_count / before.component_count)
+
+    if ink_loss > THIN_MAX_INK_LOSS or component_loss > THIN_MAX_COMPONENT_LOSS:
+        return RescaleResult(
+            mask,
+            current,
+            False,
+            "ย่อเส้นแล้วรายละเอียดหายมากเกินไป จึงคงความหนาเดิมไว้ "
+            "ลองเพิ่มความหนาเส้นหรือใช้ภาพที่มีเส้นหนาสม่ำเสมอกัน",
+        )
+
+    return RescaleResult(thinned, after.median_width, True)
+

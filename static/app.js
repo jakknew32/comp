@@ -323,6 +323,24 @@ async function readError(response) {
   return "ทำรายการไม่สำเร็จ (รหัส " + response.status + ")";
 }
 
+/** ถอดข้อความไทยจาก HTTP header กลับเป็นข้อความอ่านได้
+
+ * header ต้องเป็น ASCII เท่านั้น ฝั่งเซิร์ฟเวอร์จึงส่งข้อความภาษาไทยมา
+ * ในรูปแบบ \xE0\xB8\xA3 ต้องถอดกลับก่อนนำไปแสดง
+ */
+function decodeHeader(value) {
+  if (!value) return "";
+  return value
+    .split(";")
+    .map((part) =>
+      part
+        .trim()
+        .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    )
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function downloadName(response) {
   const header = response.headers.get("Content-Disposition") || "";
   const match = /filename="([^"]+)"/.exec(header);
@@ -355,7 +373,13 @@ async function preview() {
     dom.previewImg.dataset.url = url;
     dom.previewImg.src = url;
     dom.previewWrap.hidden = false;
-    setStatus("ตัวอย่างพร้อมแล้ว");
+
+    const notice = decodeHeader(response.headers.get("X-Notice"));
+    if (notice) {
+      setStatus(notice, "warn");
+    } else {
+      setStatus("ตัวอย่างพร้อมแล้ว");
+    }
   } catch (_) {
     setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");
   } finally {
@@ -398,11 +422,12 @@ async function makeBook() {
     setTimeout(() => URL.revokeObjectURL(link.href), 30000);
 
     const pages = response.headers.get("X-Page-Count");
-    const warn = response.headers.get("X-Warnings");
-    setStatus(
-      "สร้างเสร็จแล้ว" + (pages ? " " + pages + " หน้า" : "") +
-        (warn ? " (มีข้อความแจ้งเตือนด้านล่างของหน้าเว็บ)" : "")
-    );
+    const warn = decodeHeader(response.headers.get("X-Warnings"));
+    if (warn) {
+      setStatus(`สร้างเสร็จแล้ว` + (pages ? " " + pages + " หน้า" : "") + " — " + warn, "warn");
+    } else {
+      setStatus("สร้างเสร็จแล้ว" + (pages ? " " + pages + " หน้า" : ""));
+    }
   } catch (_) {
     setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");
   } finally {

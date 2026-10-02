@@ -60,7 +60,7 @@ _CACHE_LIMIT = 64
 class LineArtPayload(BaseModel):
     """ค่าที่ส่งมาจากหน้าเว็บ ฟิลด์ที่เป็น null แปลว่าให้โปรแกรมตัดสินใจเอง"""
 
-    target_line_mm: float | None = Field(default=None, ge=0.5, le=8.0)
+    target_line_mm: float | None = Field(default=None, ge=0.2, le=8.0)
     speckle_ratio: float | None = Field(default=None, gt=0.0, le=0.05)
     denoise: int | None = Field(default=None, ge=0, le=15)
     xdog_sigma: float | None = Field(default=None, ge=0.3, le=8.0)
@@ -248,11 +248,14 @@ async def preview(
             detail="ไม่พบเส้นในภาพนี้เลย ลองใช้ภาพที่เป็นภาพลายเส้นหรือเพิ่มความละเอียด",
         )
 
-    page = book_pdf.render_preview(result.mask, caption, bp, lp)
+    page, notes = book_pdf.render_preview(result.mask, caption, bp, lp)
     return Response(
         content=_png_bytes(page),
         media_type="image/png",
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store",
+            "X-Notice": _encode_header(notes),
+        },
     )
 
 
@@ -316,6 +319,8 @@ async def make_book(
     fallback = "coloring-book-" + datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = imgio.slugify(f"{bp.title}-coloring-book", fallback=fallback)
 
+    all_warnings = list(dict.fromkeys(warnings + result.warnings))
+
     return Response(
         content=result.pdf_bytes,
         media_type="application/pdf",
@@ -323,9 +328,19 @@ async def make_book(
             # ชื่อไฟล์ต้องมาจากฝั่งเซิร์ฟเวอร์เท่านั้น ห้ามใช้ชื่อที่ผู้ใช้ส่งมา
             "Content-Disposition": f'attachment; filename="{filename}.pdf"',
             "X-Page-Count": str(result.page_count),
-            "X-Warnings": "; ".join(warnings).encode("ascii", "backslashreplace").decode(),
+            "X-Warnings": _encode_header(all_warnings),
         },
     )
+
+
+def _encode_header(values: list[str]) -> str:
+    """เข้ารหัสข้อความไทยให้พอดีกับข้อจำกัดของ HTTP header
+
+    header ต้องเป็น ASCII เท่านั้น จึงต้องแทนอักขระไทยด้วย escape sequence
+    ฝั่งหน้าเว็บจะถอดกลับเป็นข้อความภาษาไทยให้ผู้ใช้อ่านได้
+    """
+    text = "; ".join(values)
+    return text.encode("ascii", "backslashreplace").decode("ascii")
 
 
 def _png_bytes(page) -> bytes:
