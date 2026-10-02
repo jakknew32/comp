@@ -1,0 +1,10 @@
+# แพ็กเกจเพิ่มเติมสำหรับนักพัฒนา
+# ติดตั้งเพิ่มจากของหลักด้วย: pip install -r requirements-dev.txt
+# บน Render ไม่ต้องติดตั้งไฟล์นี้
+
+-r requirements.txt
+
+pytest>=8.0
+# จำเป็นสำหรับ fastapi.testclient ที่ใช้ทดสอบเส้นทาง API
+httpx>=0.27
+pyflakes>=3.0

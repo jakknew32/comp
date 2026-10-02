@@ -150,6 +150,77 @@ function select(id) {
   renderItems();
 }
 
+/* ---------- วางรูปจากคลิปบอร์ด ---------- */
+
+/** ชื่อไฟล์ที่เบราว์เซอร์ตั้งให้อัตโนมัติ ไม่ได้มีความหมายกับผู้ใช้ */
+const AUTO_NAMES = new Set(["image", "blob", "unnamed", "screenshot"]);
+
+/** ดึงรูปภาพออกจากข้อมูลคลิปบอร์ด
+
+ * เบราว์เซอร์แต่ละตัวให้ข้อมูลคนละแบบ
+ * Chrome/Edge ใส่ไฟล์ไว้ใน clipboardData.files
+ * บางตัวไม่เติม files แต่มี clipboardData.items ให้แทน
+ * จึงต้องเช็กทั้งสองทาง ไม่งั้นวางแล้วไม่มีอะไรเกิดขึ้น
+ */
+function imagesFromClipboard(clipboardData) {
+  if (!clipboardData) return [];
+
+  const files = [];
+
+  if (clipboardData.files && clipboardData.files.length) {
+    for (const file of clipboardData.files) {
+      if (file.type.startsWith("image/")) files.push(file);
+    }
+  }
+  if (files.length) return files;
+
+  if (clipboardData.items) {
+    for (const item of clipboardData.items) {
+      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  return files;
+}
+
+/** ตั้งชื่อกำกับให้รูปที่วางมา เพราะชื่อไฟล์มักเป็น image.png ซึ่งไม่มีความหมาย */
+function pastedCaption(file, index) {
+  const base = file.name.replace(/\.[^.]+$/, "").toLowerCase();
+  if (file.name && !AUTO_NAMES.has(base)) {
+    return defaultCaption(file.name);
+  }
+  return "ภาพที่วาง " + index;
+}
+
+document.addEventListener("paste", (event) => {
+  const files = imagesFromClipboard(event.clipboardData);
+  if (files.length === 0) return; // ปล่อยให้วางข้อความตามปกติ
+
+  // ถ้ากำลังพิมพ์อยู่ในช่องข้อความ ต้องไม่ขัดจังหวะการวางข้อความ
+  const tag = document.activeElement && document.activeElement.tagName;
+  const inTextField = tag === "INPUT" || tag === "TEXTAREA";
+  if (!inTextField) event.preventDefault();
+
+  const startIndex = state.items.length + 1;
+  const prepared = files.map((file, index) => ({
+    file,
+    name: file.name || "pasted-image",
+    caption: pastedCaption(file, startIndex + index),
+    url: URL.createObjectURL(file),
+    warning: null,
+  }));
+
+  state.items.push(...prepared);
+  if (state.selectedId === null) state.selectedId = state.items[0].id;
+  renderItems();
+  setBusy(false);
+  setStatus(
+    `วางรูปจากคลิปบอร์ด ${files.length} รูป` +
+      (inTextField ? " (กดลอกช่องอื่นก่อนวางรูปได้สะดวกขึ้น)" : "")
+  );
+});
+
 /* ---------- จัดการไฟล์ ---------- */
 
 function addFiles(fileList) {
