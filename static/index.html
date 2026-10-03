@@ -43,6 +43,33 @@
   </section>
 
   <section class="panel">
+    <h2>ดึงรูปจากเว็บไซต์</h2>
+    <p class="hint">ใส่ลิงก์หน้าเว็บที่มีรูปภาพ แล้วเลือกเฉพาะรูปที่ต้องการ</p>
+
+    <label class="field">
+      <span class="field-label">ลิงก์เว็บไซต์</span>
+      <input type="url" id="webUrl" placeholder="https://example.com/gallery"
+             inputmode="url" autocomplete="off" spellcheck="false">
+    </label>
+
+    <div class="actions">
+      <button type="button" id="fetchBtn">ค้นหารูปในเว็บไซต์</button>
+    </div>
+
+    <div id="webResults" class="web-results" hidden>
+      <div class="list-head">
+        <h3>พบรูป <span id="webCount" class="pill">0</span></h3>
+        <button type="button" id="webSelectAll" class="ghost" hidden>เลือกทั้งหมด</button>
+      </div>
+      <div id="webImages" class="web-images"></div>
+      <div class="actions">
+        <button type="button" id="webAddBtn" disabled>เพิ่มรูปที่เลือกลงในสมุด</button>
+      </div>
+      <p id="webStatus" class="status" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <section class="panel">
     <h2>ตั้งค่า</h2>
 
     <label class="field">

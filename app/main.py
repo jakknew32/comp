@@ -28,6 +28,7 @@ from .config import (
     LineArtParams,
 )
 from .lineart import convert, imgio, text
+from .webgrab import WebImageError, download_image, list_images
 
 logger = logging.getLogger("coloring_book")
 
@@ -357,6 +358,45 @@ async def make_book(
             "Content-Disposition": f'attachment; filename="{filename}.pdf"',
             "X-Page-Count": str(result.page_count),
             "X-Warnings": _encode_header(all_warnings),
+        },
+    )
+
+
+@app.post("/api/web-images")
+async def web_images(url: Annotated[str, Form()]) -> JSONResponse:
+    """คืนรายการลิงก์รูปที่พบในหน้าเว็บที่ผู้ใช้ใส่มา
+
+    คืนแค่ลิงก์ ไม่ดาวน์โหลดรูปมาทั้งหมด เพราะหน้าเว็บหนึ่งหน้าอาจมีรูปนับร้อย
+    การโหลดมาทั้งหมดจะทำให้เซิร์ฟเวอร์ค้าง ผู้ใช้จึงต้องเลือกก่อนดาวน์โหลด
+    """
+    try:
+        images = list_images(url)
+    except WebImageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return JSONResponse({"images": images, "count": len(images)})
+
+
+@app.post("/api/web-image")
+async def web_image(url: Annotated[str, Form()]) -> Response:
+    """ดาวน์โหลดรูปหนึ่งไฟล์จากลิงก์ที่เลือก แล้วส่งกลับเป็นไฟล์ภาพ
+
+    ต้องให้เซิร์ฟเวอร์เป็นคนโหลด เพราะเบราว์เซอร์ถูกกฎ CORS ของเว็บเป้าหมายกัน
+    อ่านไฟล์ข้ามโดเมนไม่ได้ ฝั่งหน้าเว็บจึงเอาไฟล์ที่ได้ไปเข้าสู่ขั้นตอนเดียวกับไฟล์ที่อัปโหลด
+    """
+    try:
+        raw, name = download_image(url)
+    except WebImageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(
+        content=raw,
+        media_type="application/octet-stream",
+        headers={
+            # ชื่อไฟล์ต้องเป็น ASCII ตามโครงสร้างไฟล์ จึงต้องผ่าน slugify
+            "Content-Disposition": f'attachment; filename="{imgio.slugify(name, "web-image")}.img"',
+            "X-Image-Name": _encode_header([name]),
+            "Cache-Control": "no-store",
         },
     )
 

@@ -6,6 +6,8 @@ const state = {
   selectedId: null,
   nextId: 1,
   busy: false,
+  // รูปที่ค้นพบจากเว็บไซต์ ยังไม่ได้ดาวน์โหลดเข้าสมุด
+  found: [],
 };
 
 const GRID_LABELS = {
@@ -53,6 +55,14 @@ const dom = {
   useAi: el("useAi"),
   aiHint: el("aiHint"),
   notice: el("notice"),
+  webUrl: el("webUrl"),
+  fetchBtn: el("fetchBtn"),
+  webResults: el("webResults"),
+  webImages: el("webImages"),
+  webCount: el("webCount"),
+  webStatus: el("webStatus"),
+  webAddBtn: el("webAddBtn"),
+  webSelectAll: el("webSelectAll"),
 };
 
 /** แสดงตัวเลือก AI เฉพาะเมื่อเจ้าของเซิร์ฟเวอร์ตั้งค่าไว้แล้ว
@@ -252,6 +262,213 @@ document.addEventListener("paste", (event) => {
       (inTextField ? " (กดลอกช่องอื่นก่อนวางรูปได้สะดวกขึ้น)" : "")
   );
 });
+
+/* ---------- ดึงรูปจากเว็บไซต์ ---------- */
+
+/** แสดงรูปที่ค้นพบจากเว็บไซต์เป็นการ์ดให้ผู้ใช้เลือก */
+function renderWebImages() {
+  dom.webImages.replaceChildren();
+
+  if (state.found.length === 0) {
+    dom.webImages.textContent = "ไม่พบรูปภาพในหน้าเว็บนี้";
+    return;
+  }
+
+  for (const [index, img] of state.found.entries()) {
+    const card = document.createElement("div");
+    card.className = "web-image";
+    card.dataset.index = index;
+
+    const picture = document.createElement("img");
+    picture.src = img.url;
+    picture.alt = img.name;
+    picture.loading = "lazy";
+    // รูปโหลดไม่ขึ้นมักเป็นเพราะเว็บเป้าหมายไม่อนุญาตให้อ่านข้ามโดเมน
+    // ส่วนการดาวน์โหลดจริงยังทำงานได้ เพราะเซิร์ฟเวอร์เป็นคนโหลด
+    picture.addEventListener("error", () => {
+      picture.replaceWith(placeholder());
+    });
+
+    const tick = document.createElement("span");
+    tick.className = "tick";
+    tick.textContent = "✓";
+
+    const name = document.createElement("span");
+    name.className = "wname";
+    // ใช้ textContent เสมอ เพราะชื่อมาจากเว็บเป้าหมาย อาจมีอักขระ HTML ปนมา
+    name.textContent = img.name;
+    name.title = img.url;
+
+    card.append(picture, tick, name);
+    card.addEventListener("click", () => {
+      card.classList.toggle("on");
+      syncWebSelection();
+    });
+
+    dom.webImages.appendChild(card);
+  }
+}
+
+/** รูปตัวแทนสำหรับรูปที่เบราว์เซอร์โหลดไม่ขึ้น */
+function placeholder() {
+  const box = document.createElement("div");
+  box.className = "noimg";
+  box.textContent = "ดูตัวอย่างไม่ได้";
+  return box;
+}
+
+/** นับรูปที่เลือกไว้ แล้วเปิดปุ่มเพิ่มเฉพาะเมื่อมีอย่างน้อยหนึ่งรูป */
+function syncWebSelection() {
+  const chosen = dom.webImages.querySelectorAll(".web-image.on").length;
+  dom.webAddBtn.disabled = chosen === 0;
+  dom.webAddBtn.textContent =
+    chosen === 0 ? "เพิ่มรูปที่เลเพิ่มรูปที่เลือกลงในสมุดกลงในสมุด" : `เพิ่มรูปที่เลือก (${chosen}) ลงในสมุด`;
+  dom.webSelectAll.hidden = state.found.length === 0;
+}
+
+function setWebStatus(message, kind = "") {
+  dom.webStatus.textContent = message || "";
+  dom.webStatus.className = "status" + (kind ? " " + kind : "");
+}
+
+/** ขอเซิร์ฟเวอร์ไล่หาลิงก์รูปในหน้าเว็บที่ผู้ใช้ใส่มา */
+async function fetchWebImages() {
+  const url = dom.webUrl.value.trim();
+  if (!url) {
+    setWebStatus("กรุณาใส่ลิงก์เว็บไซต์ก่อน", "error");
+    return;
+  }
+
+  dom.fetchBtn.disabled = true;
+  setWebStatus("กำลังค้นหารูปในหน้าเว็บ...");
+
+  try {
+    const response = await fetch("/api/web-images", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ url }),
+    });
+
+    if (!response.ok) {
+      setWebStatus(await readError(response), "error");
+      return;
+    }
+
+    const data = await response.json();
+    state.found = data.images || [];
+    dom.webCount.textContent = String(state.found.length);
+    dom.webResults.hidden = false;
+
+    if (state.found.length === 0) {
+      setWebStatus("ไม่พบรูปภาพในหน้าเว็บนี้", "warn");
+    } else {
+      setWebStatus(
+        `พบ ${state.found.length} รูป — เลือกเฉพาะที่ต้องการ`
+      );
+    }
+
+    renderWebImages();
+    syncWebSelection();
+  } catch (_) {
+    setWebStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");
+  } finally {
+    dom.fetchBtn.disabled = false;
+  }
+}
+
+/** ดาวน์โหลดรูปที่ผู้ใช้เลือก แล้วเข้าสู่ขั้นตอนเดียวกับไฟล์ที่อัปโหลด */
+async function addSelectedWebImages() {
+  const chosen = Array.from(dom.webImages.querySelectorAll(".web-image.on"));
+  if (chosen.length === 0) {
+    setWebStatus("ยังไม่ได้เลือกรูป", "warn");
+    return;
+  }
+
+  dom.webAddBtn.disabled = true;
+  const failures = [];
+  let added = 0;
+
+  for (const card of chosen) {
+    const target = state.found[Number(card.dataset.index)];
+    if (!target) continue;
+
+    setWebStatus(`กำลังดาวน์โหลดรูป ${added + 1} จาก ${chosen.length}...`);
+    try {
+      const response = await fetch("/api/web-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ url: target.url }),
+      });
+      if (!response.ok) {
+        failures.push(`${target.name}: ${await readError(response)}`);
+        continue;
+      }
+
+      const blob = await response.blob();
+      // ต้องตั้งชื่อไฟล์ให้มีนามสกุลที่รองรับ ไม่งั้นเซิร์ฟเวอร์จะปฏิเสธตอนสร้าง PDF
+      const filename = withImageExtension(
+        target.name,
+        blob.type || "image/jpeg"
+      );
+      const file = new File([blob], filename, {
+        type: blob.type || "image/jpeg",
+      });
+
+      state.items.push({
+        id: state.nextId++,
+        file,
+        name: filename,
+        caption: defaultCaption(filename),
+        url: URL.createObjectURL(file),
+        warning: null,
+      });
+      added += 1;
+    } catch (_) {
+      failures.push(`${target.name}: ดาวน์โหลดไม่สำเร็จ`);
+    }
+  }
+
+  if (added > 0) {
+    if (state.selectedId === null) state.selectedId = state.items[0].id;
+    renderItems();
+    setBusy(false);
+  }
+
+  state.found = [];
+  dom.webResults.hidden = true;
+  dom.webImages.replaceChildren();
+  dom.webAddBtn.textContent = "เพิ่มรูปที่เลือกลงในสมุด";
+  dom.webUrl.value = "";
+
+  if (failures.length === 0) {
+    setWebStatus("");
+  } else {
+    setWebStatus(
+      `เพิ่มได้ ${added} รูป · ข้าม ${failures.length} รูปที่ดาวน์โหลดไม่ได้: ` +
+        failures.join(" | "),
+      "warn"
+    );
+  }
+}
+
+/** เติมนามสกุลให้ชื่อที่ได้จาก URL ซึ่งมักไม่มี
+
+ * เซิร์ฟเวอร์ปฏิเสธไฟล์ที่นามสกุลไม่อยู่ในรายการที่รองรับ
+ * ชื่อจาก URL มักเป็นแบไม่มีนามสกุล a1b2c3 ไม่มีนามสกุล จึงต้องเติมจากชนิดที่เซิร์ฟเวอร์ส่งมา
+ */
+function withImageExtension(name, mimeType) {
+  const supported = /\.(png|jpe?g|webp|bmp|tiff?)$/i;
+  if (supported.test(name)) return name;
+
+  const byMime = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/bmp": "bmp",
+    "image/tiff": "tiff",
+  };
+  return name + "." + (byMime[mimeType] || "jpg");
+}
 
 /* ---------- จัดการไฟล์ ---------- */
 
@@ -534,6 +751,22 @@ function init() {
   dom.makeBtn.addEventListener("click", makeBook);
   dom.line.addEventListener("input", syncLabels);
   dom.speckle.addEventListener("input", syncLabels);
+
+  dom.fetchBtn.addEventListener("click", fetchWebImages);
+  dom.webAddBtn.addEventListener("click", addSelectedWebImages);
+  dom.webSelectAll.addEventListener("click", () => {
+    const cards = Array.from(dom.webImages.children);
+    const allOn = cards.every((card) => card.classList.contains("on"));
+    for (const card of cards) card.classList.toggle("on", !allOn);
+    syncWebSelection();
+  });
+  // กด Enter ในช่องลิงก์เพื่อค้นหาได้เลย ไม่ต้องขยับเมาส์ไปกดปุ่ม
+  dom.webUrl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      fetchWebImages();
+    }
+  });
 
   dom.previewImg.addEventListener("load", () => {
     dom.previewImg.removeAttribute("width");
