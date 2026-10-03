@@ -277,6 +277,7 @@ button.ghost { flex: none; padding: 4px 10px; font-size: 13px; color: var(--mute
   font-size: 12px;
 }
 
+<<<<<<< HEAD
 /* ---------- ดึงรูปจากเว็บไซต์ ---------- */
 
 .web-results {
@@ -372,3 +373,51 @@ button.ghost { flex: none; padding: 4px 10px; font-size: 13px; color: var(--mute
   .web-images { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
 }
 
+=======
+/* Web Scraper Box */
+.scraper-box {
+  background: linear-gradient(135deg, #F0F9FF 0%, #E0F2FE 100%);
+  border: 1px solid #BAE6FD;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.scraper-input-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.scraper-options {
+  margin-top: 10px;
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: #64748B;
+}
+
+.scraper-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scraper-options input[type="number"] {
+  padding: 4px 8px;
+  border: 1px solid #CBD5E1;
+  border-radius: 4px;
+  font-size: 13px;
+  width: 60px;
+}
+
+#scrapeUrl:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 111, 78, 0.1);
+}
+
+#scrapeBtn {
+  flex-shrink: 0;
+}
+>>>>>>> 6f3ccb663956a96eeff79824f691af693e8692ef
