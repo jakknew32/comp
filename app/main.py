@@ -9,15 +9,11 @@ from __future__ import annotations
 import io
 import json
 import logging
-import re
 from datetime import datetime
 from functools import lru_cache
 from typing import Annotated
-from urllib.parse import urljoin, urlparse
 
 import numpy as np
-import requests
-from bs4 import BeautifulSoup
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -235,149 +231,6 @@ def health() -> dict:
         "grids": sorted(GRID_OPTIONS),
         "ai": ai.status(_ai_settings()),
     }
-
-
-# --- Web Scraper API --------------------------------------------------------
-
-
-class ScrapeRequest(BaseModel):
-    """คำขอดึงรูปภาพจากเว็บไซต์"""
-    url: str
-    min_size_kb: int = Field(default=5, ge=0, description="ขนาดไฟล์ขั้นต่ำ (KB)")
-    max_images: int = Field(default=30, ge=1, le=200, description="จำนวนรูปสูงสุด")
-
-
-def extract_images_from_url(url: str, timeout: int = 15) -> list[str]:
-    """ดึง URL ของรูปภาพทั้งหมดจากหน้าเว็บ"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    resp = requests.get(url, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-    found_urls = set()
-
-    # ดึงจากแท็ก img
-    for img in soup.find_all("img"):
-        for attr in ["src", "data-src", "data-original", "data-lazy-src", "srcset", "data-srcset"]:
-            val = img.get(attr)
-            if not val:
-                continue
-            if "srcset" in attr:
-                parts = [p.strip().split()[0] for p in val.split(",") if p.strip()]
-                for p in parts:
-                    abs_url = urljoin(url, p)
-                    if abs_url.startswith(("http://", "https://")):
-                        found_urls.add(abs_url)
-            else:
-                abs_url = urljoin(url, val.strip())
-                if abs_url.startswith(("http://", "https://")):
-                    found_urls.add(abs_url)
-
-    # ดึงจากแท็ก source
-    for source in soup.find_all("source"):
-        for attr in ["srcset", "data-srcset", "src"]:
-            val = source.get(attr)
-            if val:
-                parts = [p.strip().split()[0] for p in val.split(",") if p.strip()]
-                for p in parts:
-                    abs_url = urljoin(url, p)
-                    if abs_url.startswith(("http://", "https://")):
-                        found_urls.add(abs_url)
-
-    # ดึงจากลิงก์ที่ชี้ไปยังไฟล์รูป
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        if href.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")):
-            abs_url = urljoin(url, href)
-            found_urls.add(abs_url)
-
-    return list(found_urls)
-
-
-def get_clean_filename(url: str, index: int, default_ext: str = ".jpg") -> str:
-    """สร้างชื่อไฟล์ที่สะอาดจาก URL"""
-    parsed = urlparse(url)
-    basename = parsed.path.split("/")[-1].split("?")[0]
-    clean_name = basename
-
-    valid_exts = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
-    if not clean_name or not clean_name.lower().endswith(valid_exts):
-        clean_name = f"image_{index:03d}{default_ext}"
-    else:
-        name_part, ext = clean_name.rsplit(".", 1) if "." in clean_name else (clean_name, "jpg")
-        name_part = re.sub(r"[^\w\-.]", "_", name_part)[:40]
-        clean_name = f"{index:03d}_{name_part}.{ext}"
-
-    return clean_name
-
-
-@app.post("/api/scrape")
-async def scrape_images(request: ScrapeRequest) -> dict:
-    """ดึงรูปภาพจากเว็บไซต์และส่งกลับเป็น base64"""
-    if not request.url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="URL ต้องขึ้นต้นด้วย http:// หรือ https://")
-
-    try:
-        # ดึง URL ของรูปทั้งหมด
-        img_urls = extract_images_from_url(request.url)
-
-        if not img_urls:
-            return {"success": True, "images": [], "total": 0, "message": "ไม่พบรูปภาพในหน้าเว็บนี้"}
-
-        # จำกัดจำนวน
-        img_urls = img_urls[:request.max_images]
-
-        # ดาวน์โหลดรูป
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": request.url,
-        }
-
-        import base64
-        downloaded = []
-
-        for idx, img_url in enumerate(img_urls, 1):
-            try:
-                resp = requests.get(img_url, headers=headers, timeout=10)
-                if resp.status_code == 200:
-                    content = resp.content
-                    size_kb = len(content) / 1024.0
-
-                    if size_kb >= request.min_size_kb:
-                        fname = get_clean_filename(img_url, idx)
-                        b64_data = base64.b64encode(content).decode("utf-8")
-
-                        # ตรวจสอบ content type
-                        content_type = resp.headers.get("Content-Type", "image/jpeg")
-                        if not content_type.startswith("image/"):
-                            content_type = "image/jpeg"
-
-                        downloaded.append({
-                            "name": fname,
-                            "size_kb": round(size_kb, 1),
-                            "url": img_url,
-                            "data": f"data:{content_type};base64,{b64_data}",
-                        })
-            except Exception as e:
-                logger.warning(f"ไม่สามารถดาวน์โหลด {img_url}: {e}")
-                continue
-
-        return {
-            "success": True,
-            "images": downloaded,
-            "total": len(downloaded),
-            "source_url": request.url,
-        }
-
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=408, detail="หมดเวลาเชื่อมต่อเว็บไซต์")
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=400, detail=f"ไม่สามารถเข้าถึงเว็บไซต์: {str(e)}")
-    except Exception as e:
-        logger.error(f"เกิดข้อผิดพลาดในการดึงรูป: {e}")
-        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาด: {str(e)}")
 
 
 @app.post("/api/validate")

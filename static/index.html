@@ -25,30 +25,7 @@
 
 <main class="layout">
   <section class="panel">
-    <!-- Web Scraper Section -->
-    <div class="scraper-box">
-      <h3 style="margin: 0 0 12px 0; font-size: 16px; color: #1E293B;">ดึงรูปจากเว็บไซต์</h3>
-      <div class="scraper-input-row">
-        <input type="url" id="scrapeUrl" placeholder="https://example.com"
-               style="flex: 1; padding: 10px 14px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 14px;">
-        <button type="button" id="scrapeBtn" class="primary" style="white-space: nowrap;">
-          ดึงรูปภาพ
-        </button>
-      </div>
-      <div class="scraper-options" style="margin-top: 10px; display: flex; gap: 16px; font-size: 13px; color: #64748B;">
-        <label>
-          ขนาดขั้นต่ำ: <input type="number" id="scrapeMinSize" value="5" min="0" style="width: 60px;"> KB
-        </label>
-        <label>
-          จำนวนสูงสุด: <input type="number" id="scrapeMaxImages" value="30" min="1" max="200" style="width: 60px;"> รูป
-        </label>
-      </div>
-      <p id="scrapeStatus" class="status" style="margin-top: 8px; font-size: 13px;"></p>
-    </div>
-
-    <div style="margin: 20px 0; border-top: 1px solid #E2E8F0;"></div>
-
-    <h3 style="margin: 0 0 12px 0; font-size: 16px; color: #1E293B;">หรืออัปโหลดจากเครื่อง</h3>
+    <h3 style="margin: 0 0 12px 0; font-size: 16px; color: #1E293B;">อัปโหลดจากเครื่อง</h3>
 
     <div id="drop" class="dropzone" tabindex="0" role="button"
          aria-label="เลือกหรือลากภาพมาวางที่นี่">

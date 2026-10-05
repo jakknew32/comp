@@ -55,7 +55,6 @@ const dom = {
   useAi: el("useAi"),
   aiHint: el("aiHint"),
   notice: el("notice"),
-<<<<<<< HEAD
   webUrl: el("webUrl"),
   fetchBtn: el("fetchBtn"),
   webResults: el("webResults"),
@@ -64,14 +63,6 @@ const dom = {
   webStatus: el("webStatus"),
   webAddBtn: el("webAddBtn"),
   webSelectAll: el("webSelectAll"),
-=======
-  // Web scraper elements
-  scrapeUrl: el("scrapeUrl"),
-  scrapeBtn: el("scrapeBtn"),
-  scrapeMinSize: el("scrapeMinSize"),
-  scrapeMaxImages: el("scrapeMaxImages"),
-  scrapeStatus: el("scrapeStatus"),
->>>>>>> 6f3ccb663956a96eeff79824f691af693e8692ef
 };
 
 /** แสดงตัวเลือก AI เฉพาะเมื่อเจ้าของเซิร์ฟเวอร์ตั้งค่าไว้แล้ว
@@ -331,7 +322,7 @@ function syncWebSelection() {
   const chosen = dom.webImages.querySelectorAll(".web-image.on").length;
   dom.webAddBtn.disabled = chosen === 0;
   dom.webAddBtn.textContent =
-    chosen === 0 ? "เพิ่มรูปที่เลเพิ่มรูปที่เลือกลงในสมุดกลงในสมุด" : `เพิ่มรูปที่เลือก (${chosen}) ลงในสมุด`;
+    chosen === 0 ? "เพิ่มรูปที่เลือกลงในสมุด" : `เพิ่มรูปที่เลือก (${chosen}) ลงในสมุด`;
   dom.webSelectAll.hidden = state.found.length === 0;
 }
 
@@ -606,84 +597,6 @@ function downloadName(response) {
   return match ? match[1] : "coloring-book.pdf";
 }
 
-/* ---------- ดึงรูปจากเว็บไซต์ ---------- */
-
-async function scrapeImages() {
-  const url = dom.scrapeUrl.value.trim();
-
-  if (!url) {
-    dom.scrapeStatus.textContent = "กรุณากรอก URL";
-    dom.scrapeStatus.className = "status error";
-    return;
-  }
-
-  if (!url.startsWith("http://") && !url.startsWith("https://")) {
-    dom.scrapeStatus.textContent = "URL ต้องขึ้นต้นด้วย http:// หรือ https://";
-    dom.scrapeStatus.className = "status error";
-    return;
-  }
-
-  const minSize = parseInt(dom.scrapeMinSize.value) || 5;
-  const maxImages = parseInt(dom.scrapeMaxImages.value) || 30;
-
-  dom.scrapeBtn.disabled = true;
-  dom.scrapeStatus.textContent = "กำลังดึงรูปภาพจากเว็บไซต์...";
-  dom.scrapeStatus.className = "status busy";
-
-  try {
-    const response = await fetch("/api/scrape", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: url,
-        min_size_kb: minSize,
-        max_images: maxImages,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || "ไม่สามารถดึงรูปได้");
-    }
-
-    const data = await response.json();
-
-    if (data.images && data.images.length > 0) {
-      // แปลง base64 เป็นไฟล์
-      for (const img of data.images) {
-        const response = await fetch(img.data);
-        const blob = await response.blob();
-        const file = new File([blob], img.name, { type: blob.type });
-
-        state.items.push({
-          id: state.nextId++,
-          file: file,
-          name: img.name,
-          caption: defaultCaption(img.name),
-          url: URL.createObjectURL(file),
-          warning: null,
-        });
-      }
-
-      if (state.selectedId === null && state.items.length > 0) {
-        state.selectedId = state.items[0].id;
-      }
-
-      renderItems();
-      setBusy(false);
-      dom.scrapeStatus.textContent = `ดึงรูปสำเร็จ ${data.images.length} รูป`;
-      dom.scrapeStatus.className = "status";
-    } else {
-      dom.scrapeStatus.textContent = data.message || "ไม่พบรูปภาพในหน้าเว็บนี้";
-      dom.scrapeStatus.className = "status warn";
-    }
-  } catch (error) {
-    dom.scrapeStatus.textContent = error.message || "เกิดข้อผิดพลาดในการดึงรูป";
-    dom.scrapeStatus.className = "status error";
-  } finally {
-    dom.scrapeBtn.disabled = false;
-  }
-}
 
 /* ---------- การเรียกเซิร์ฟเวอร์ ---------- */
 
@@ -840,7 +753,6 @@ function init() {
   dom.line.addEventListener("input", syncLabels);
   dom.speckle.addEventListener("input", syncLabels);
 
-<<<<<<< HEAD
   dom.fetchBtn.addEventListener("click", fetchWebImages);
   dom.webAddBtn.addEventListener("click", addSelectedWebImages);
   dom.webSelectAll.addEventListener("click", () => {
@@ -855,12 +767,6 @@ function init() {
       event.preventDefault();
       fetchWebImages();
     }
-=======
-  // Web scraper
-  dom.scrapeBtn.addEventListener("click", scrapeImages);
-  dom.scrapeUrl.addEventListener("keypress", (event) => {
-    if (event.key === "Enter") scrapeImages();
->>>>>>> 6f3ccb663956a96eeff79824f691af693e8692ef
   });
 
   dom.previewImg.addEventListener("load", () => {
