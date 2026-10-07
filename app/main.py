@@ -30,7 +30,7 @@ from .config import (
     LineArtParams,
 )
 from .lineart import convert, imgio, text
-from .webgrab import WebImageError, download_image, list_images
+from .webgrab import WebImageError, download_image, list_images, detect_image_format
 
 logger = logging.getLogger("coloring_book")
 
@@ -401,12 +401,15 @@ async def web_image(url: Annotated[str, Form()]) -> Response:
     except WebImageError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # ตรวจจับรูปแบบและส่ง MIME type ที่ถูกต้อง
+    mime_type, ext = detect_image_format(raw)
+    filename_ascii = imgio.slugify(name, "web-image") + ext
+
     return Response(
         content=raw,
-        media_type="application/octet-stream",
+        media_type=mime_type,
         headers={
-            # ชื่อไฟล์ต้องเป็น ASCII ตามโครงสร้างไฟล์ จึงต้องผ่าน slugify
-            "Content-Disposition": f'attachment; filename="{imgio.slugify(name, "web-image")}.img"',
+            "Content-Disposition": f'attachment; filename="{filename_ascii}"',
             "X-Image-Name": _encode_header([name]),
             "Cache-Control": "no-store",
         },

@@ -81,6 +81,36 @@ PINIMG_PATTERN = re.compile(
 PINIMG_TARGET_SIZE = "736x"
 PINIMG_SMALL_SIZES = ("170x", "236x", "474x")
 
+# แมพ format ของ PIL เป็น MIME type และ extension
+FORMAT_TO_MIME_AND_EXT = {
+    "JPEG": ("image/jpeg", ".jpg"),
+    "JPG": ("image/jpeg", ".jpg"),
+    "PNG": ("image/png", ".png"),
+    "WEBP": ("image/webp", ".webp"),
+    "GIF": ("image/gif", ".gif"),
+    "BMP": ("image/bmp", ".bmp"),
+    "TIFF": ("image/tiff", ".tiff"),
+}
+
+
+def detect_image_format(data: bytes) -> tuple[str, str]:
+    """ตรวจจับรูปแบบของรูปภาพและคืน (mime_type, extension)
+    
+    ใช้ PIL เพื่ออ่านหัวไฟล์ (แค่ header ไม่ต้องถอดรูปทั้งหมด)
+    ถ้าตรวจจับไม่ได้จะคืนค่าเริ่มต้นเป็น JPEG
+    """
+    from PIL import Image
+    import io
+    
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            fmt = (img.format or "").upper()
+            mime_type, ext = FORMAT_TO_MIME_AND_EXT.get(fmt, ("image/jpeg", ".jpg"))
+            return mime_type, ext
+    except Exception:
+        # ถ้าตรวจจับไม่ได้ ให้ใช้ค่าเริ่มต้น JPEG
+        return "image/jpeg", ".jpg"
+
 
 def upgrade_pinimg(url: str) -> str:
     """ย้ายรูปของ Pinterest ไปยังขนาดใหญ่ที่สุดที่มีให้ดาวน์โหลด"""
@@ -155,11 +185,22 @@ def _looks_like_image(url: str) -> bool:
     แต่การเดาผิดว่าเป็นรูปทำให้ต้องดาวน์โหลดแล้วค่อยพัง ซึ่งช้ากว่าการข้าม
     """
     path = urlparse(url).path.lower()
+    
+    # ตรวจสอบนามสกุล - ถ้าเป็นนามสกุลรูปให้ผ่าน
     if path.endswith(IMAGE_EXTENSIONS):
         return True
-    # มีนามสกุลอื่นที่ระบุชัด เช่น .php ที่ส่งรูปมา ให้ข้าม
+    
+    # ถ้ามีนามสกุลอื่นที่ไม่ใช่รูป ให้ข้าม (เช่น .php, .html, .css)
     if re.search(r"\.[a-z0-9]{2,5}$", path) and not path.endswith("/"):
         return False
+    
+    # URLs ที่ลงท้ายด้วยตัวเลขหรือ size descriptors มักเป็น incomplete URLs (เช่น thumbnail APIs)
+    # เช่น "/image/20px" หรือ "/thumb/250w" ให้ข้าม
+    if re.search(r"(thumbnail|thumb|thumb\d+|[\d]+[a-z]*w?px)$", path):
+        return False
+    
+    # ถ้า URL ไม่มีนามสกุลและไม่ใช่ incomplete URL ให้ลองดาวน์โหลด
+    # (เว็บบางแห่งมี CDN ที่ไม่ระบุนามสกุลแต่ส่งรูป)
     return True
 
 
