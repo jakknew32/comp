@@ -1,10 +1,7 @@
-"""การเชื่อมต่อ AI เพื่อช่วยแปลงภาพถ่ายเป็นภาพลายเส้น
+"""การเชื่อมต่อ AI สองด้าน: แปลงภาพถ่ายเป็นลายเส้น และสร้างภาพจากข้อความ
 
 โปรแกรมนี้ทำงานได้ครบโดยไม่ต้องมี AI เลย
-ส่วนนี้เป็นขั้นตอนเสริมที่ช่วยจัดการกับภาพถ่ายจริง
-ซึ่ง OpenCV ทำได้แค่ได้เส้นตามภาพต้นฉบับ ไม่ได้ภาพการ์ตูนน่ารัก
-
-การเรียกใช้มีเงื่อนไขสำคัญ:
+ส่วนนี้เป็นขั้นตอนเสริมซึ่งมีเงื่อนไขเหมือนกันทุกฟังก์ชัน:
 - ต้องมีคีย์ของผู้ให้บริการ เก็บเป็นตัวแปรแวดล้อมของเซิร์ฟเวอร์
 - เสียค่าใช้จ่ายต่อหนึ่งภาพ
 - เรียกผ่านอินเทอร์เน็ต ทำให้ภาพออกจากเครื่องผู้ใช้
@@ -16,8 +13,15 @@ from __future__ import annotations
 import numpy as np
 
 from ..lineart import detect
-from . import gemini, huggingface
+from . import gemini, generate, huggingface
 from .gemini import AiError
+from .generate import (
+    GenerateResult,
+    STYLE_PRESETS,
+    build_prompt,
+    generate_image,
+    list_styles,
+)
 from .settings import (
     ESTIMATED_COST_PER_IMAGE_USD,
     PROMPT_TH,
@@ -36,6 +40,11 @@ __all__ = [
     "AiOutcome",
     "enhance",
     "status",
+    "GenerateResult",
+    "STYLE_PRESETS",
+    "build_prompt",
+    "generate_image",
+    "list_styles",
 ]
 
 
@@ -67,25 +76,26 @@ def status(settings: AiSettings) -> dict:
     หน้าเว็บต้องซ่อนตัวเลือกนี้เมื่อยังตั้งค่าไม่เรียบร้อย
     ไม่ให้ผู้ใช้กดแล้วล้มเหลวโดยไม่รู้ตัว
     """
-    if settings.provider == AiProvider.HUGGINGFACE:
-        return {
-            "configured": settings.configured,
-            "provider": "huggingface",
-            "model": settings.hf_model if settings.configured else None,
-            "estimated_cost_per_image_usd": (
-                0.0 if settings.configured else None
-            ),
-            "message": None if settings.configured else settings.describe_missing(),
-        }
-
+    provider = (
+        "huggingface"
+        if settings.provider == AiProvider.HUGGINGFACE
+        else "gemini"
+    )
+    model = (
+        settings.hf_model if provider == "huggingface" else settings.model
+    )
+    cost = (
+        0.0 if provider == "huggingface" else ESTIMATED_COST_PER_IMAGE_USD
+    )
     return {
         "configured": settings.configured,
-        "provider": "gemini",
-        "model": settings.model if settings.configured else None,
+        "provider": provider,
+        "model": model if settings.configured else None,
         "estimated_cost_per_image_usd": (
-            ESTIMATED_COST_PER_IMAGE_USD if settings.configured else None
+            cost if settings.configured else None
         ),
         "message": None if settings.configured else settings.describe_missing(),
+        "styles": list_styles(),
     }
 
 
@@ -119,47 +129,31 @@ def enhance(
     """
     if not enabled:
         return AiOutcome(False, image)
-
-    # ใช้ provider/model จากพารามิเตอร์ ถ้าระบุ มิฉะนั้นใช้จาก settings
-    effective_provider = provider if provider is not None else settings.provider
-    effective_model = model if model is not None else (
-        settings.hf_model if settings.provider == AiProvider.HUGGINGFACE else settings.model
-    )
-
-    # สร้าง settings ชั่วคราวสำหรับการเรียกครั้งนี้
-    effective_settings = AiSettings(
-        provider=AiProvider(effective_provider),
-        api_key=settings.api_key,
-        hf_token=settings.hf_token,
-        model=settings.model,
-        hf_model=settings.hf_model,
-        base_url=settings.base_url,
-        timeout=settings.timeout,
-    )
-    # Override model for the specific provider
-    if effective_provider == AiProvider.HUGGINGFACE:
-        effective_settings.hf_model = model or settings.hf_model
-    else:
-        effective_settings.model = model or settings.model
-
-    if not enabled:
-        return AiOutcome(False, image)
-
     if not settings.configured:
         return AiOutcome(False, image, settings.describe_missing())
-
     if detect.analyze(image).is_line_art:
         return AiOutcome(False, image)
 
+    chosen = provider if provider is not None else settings.provider
     try:
-        if effective_provider == AiProvider.HUGGINGFACE:
-            from . import huggingface
+        if chosen == AiProvider.HUGGINGFACE:
             converted = huggingface.hf_convert_to_lineart(
-                image, effective_settings, prompt=prompt, model_key=effective_settings.hf_model
+                image,
+                settings,
+                prompt=prompt,
+                model_key=model or settings.hf_model,
             )
         else:
-            from . import gemini
-            converted = gemini.convert_to_lineart(image, effective_settings, prompt)
+            call = AiSettings(
+                provider=settings.provider,
+                api_key=settings.api_key,
+                hf_token=settings.hf_token,
+                base_url=settings.base_url,
+                timeout=settings.timeout,
+                model=model or settings.model,
+                hf_model=settings.hf_model,
+            )
+            converted = gemini.convert_to_lineart(image, call, prompt)
     except AiError as exc:
         return AiOutcome(False, image, f"ใช้ AI ไม่สำเร็จ: {exc}")
     except Exception as exc:  # noqa: BLE001 - ต้องกันไม่ให้ขั้นตอนอื่นพัง

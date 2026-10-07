@@ -1,0 +1,237 @@
+"""ทดสอบการสร้างภาพระบายสีจากข้อความด้วย AI
+
+หลักการเดียวกับการแปลงภาพ: การสร้างภาพต้องไม่ทำให้เซิร์ฟเวอร์ล้ม
+ถ้าไม่มีคีย์หรือ AI ตอบผิดพลาด ต้องคืนข้อความที่ผู้ใช้อ่านเข้าใจ
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+
+import cv2
+import numpy as np
+import pytest
+from fastapi.testclient import TestClient
+
+from app import ai
+from app.ai import generate
+from app.ai.settings import ENV_API_KEY, AiProvider, load_settings
+from app.main import app
+
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
+
+@pytest.fixture(autouse=True)
+def block_network(monkeypatch):
+    """กันไม่ให้เทสต์ยิงไปที่ API จริง"""
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("เทสต์พยายามติดต่อเครือข่าย ต้องแทนที่ urlopen")
+
+    monkeypatch.setattr(generate.urllib.request, "urlopen", forbidden)
+
+
+@pytest.fixture()
+def client() -> TestClient:
+    return TestClient(app)
+
+
+def sample_image() -> np.ndarray:
+    """ภาพสังเคราะห์ขนาดเล็กใช้เป็นผลลัพธ์ของ AI แทนการเรียกจริง"""
+    image = np.full((400, 400, 3), 255, np.uint8)
+    cv2.rectangle(image, (50, 50), (350, 350), (0, 0, 0), 8)
+    return image
+
+
+# --- สไตล์และการประกอบคำสั่ง ---------------------------------------------------
+
+
+def test_styles_are_listed_with_keys_and_labels() -> None:
+    styles = generate.list_styles()
+    assert len(styles) >= 4
+    assert all("key" in s and "label" in s for s in styles)
+    keys = {s["key"] for s in styles}
+    assert "kids_easy" in keys and "classic" in keys
+
+
+def test_build_prompt_contains_text_and_style() -> None:
+    prompt = generate.build_prompt("แมวใส่หมวก", "kids_easy")
+    assert "แมวใส่หมวก" in prompt
+    assert "เส้นดำ" in prompt, "ต้องบังคับให้ผลลัพธ์เป็นภาพระบายสีเสมอ"
+
+
+def test_unknown_style_falls_back_to_default() -> None:
+    known = generate.build_prompt("x", "classic")
+    unknown = generate.build_prompt("x", "ไม่มีสไตล์นี้")
+    assert unknown == known
+
+
+# --- การสร้างภาพแบบไม่ต้องต่อเครือข่าย ------------------------------------------
+
+
+def test_generate_requires_text() -> None:
+    settings = load_settings({ENV_API_KEY: "k"})
+    result = generate.generate_image("   ", None, settings)
+    assert result.ok is False
+    assert "คำบรรยาย" in (result.note or "")
+
+
+def test_generate_reports_missing_key() -> None:
+    settings = load_settings({})
+    result = generate.generate_image("แมว", None, settings)
+    assert result.ok is False
+    assert ENV_API_KEY in (result.note or "")
+
+
+def test_generate_rejects_overlong_prompt() -> None:
+    settings = load_settings({ENV_API_KEY: "k"})
+    result = generate.generate_image("ย" * 700, None, settings)
+    assert result.ok is False
+
+
+def test_generate_wraps_api_error_as_note(monkeypatch) -> None:
+    settings = load_settings({ENV_API_KEY: "k"})
+
+    def boom(*_args, **_kwargs):
+        raise generate.AiError("โควตาหมด")
+
+    monkeypatch.setattr(generate, "generate_with_gemini", boom)
+    result = generate.generate_image("แมว", None, settings)
+    assert result.ok is False
+    assert "โควตาหมด" in (result.note or "")
+
+
+def test_generate_returns_image_on_success(monkeypatch) -> None:
+    settings = load_settings({ENV_API_KEY: "k"})
+    monkeypatch.setattr(generate, "generate_with_gemini", lambda *_: sample_image())
+    result = generate.generate_image("แมว", "kawaii", settings)
+    assert result.ok is True
+    assert result.image is not None and result.image.size > 0
+
+
+def test_generate_uses_huggingface_when_chosen(monkeypatch) -> None:
+    settings = load_settings({ENV_API_KEY: "k"})
+    called = {}
+
+    def fake_hf(prompt, _settings):
+        called["prompt"] = prompt
+        return sample_image()
+
+    monkeypatch.setattr(generate, "generate_with_huggingface", fake_hf)
+    result = generate.generate_image("แมว", None, settings, provider="huggingface")
+    assert result.ok is True
+    assert called["prompt"].startswith("วาดภาพระบายสี")
+
+
+def test_to_png_data_url_round_trips() -> None:
+    image = sample_image()
+    data_url = generate.to_png_data_url(image)
+    assert data_url.startswith("data:image/png;base64,")
+    raw = base64.b64decode(data_url.split(",", 1)[1])
+    decoded = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+    assert decoded is not None and decoded.shape[0] == 400
+
+
+# --- รูปแบบคำขอที่ส่งให้ Gemini --------------------------------------------------
+
+
+def test_gemini_request_is_text_only(monkeypatch) -> None:
+    """คำขอสร้างภาพต้องส่งข้อความล้วน ไม่แนบภาพ"""
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            ok, buffer = cv2.imencode(".png", sample_image())
+            data = base64.b64encode(buffer.tobytes()).decode("ascii")
+            return json.dumps(
+                {"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": data}}]}}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["url"] = request.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr(generate.urllib.request, "urlopen", fake_urlopen)
+    settings = load_settings({ENV_API_KEY: "test-key"})
+    image = generate.generate_with_gemini("วาดแมว", settings)
+
+    assert image.shape[0] == 400
+    assert "test-key" in captured["url"] or captured["url"].endswith(":generateContent")
+    parts = captured["body"]["contents"][0]["parts"]
+    assert len(parts) == 1
+    assert "text" in parts[0], "ต้องเป็นข้อความล้วน ไม่มี inline_data"
+
+
+# --- เส้นทาง API ---------------------------------------------------------------
+
+
+def test_generate_endpoint_rejects_unconfigured(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr("app.main._ai_settings", lambda: load_settings({}))
+    response = client.post("/api/generate", json={"prompt": "แมว"})
+    assert response.status_code == 400
+    assert ENV_API_KEY in response.json()["detail"]
+
+
+def test_generate_endpoint_returns_data_urls(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr("app.main._ai_settings", lambda: load_settings({ENV_API_KEY: "k"}))
+    monkeypatch.setattr(ai, "generate_image", lambda *_a, **_k: generate.GenerateResult(sample_image()))
+    response = client.post(
+        "/api/generate", json={"prompt": "แมวการ์ตูน", "style": "kawaii", "count": 2}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["images"]) == 2
+    assert data["images"][0]["data"].startswith("data:image/png;base64,")
+    assert data["failed"] == []
+
+
+def test_generate_endpoint_reports_partial_failure(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr("app.main._ai_settings", lambda: load_settings({ENV_API_KEY: "k"}))
+    outcomes = iter(
+        [
+            generate.GenerateResult(sample_image()),
+            generate.GenerateResult(None, "โควตาหมดชั่วคราว"),
+        ]
+    )
+    monkeypatch.setattr(ai, "generate_image", lambda *_a, **_k: next(outcomes))
+    response = client.post("/api/generate", json={"prompt": "แมว", "count": 2})
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["images"]) == 1
+    assert "โควตาหมดชั่วคราว" in data["failed"]
+
+
+def test_generate_endpoint_fails_when_all_attempts_fail(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr("app.main._ai_settings", lambda: load_settings({ENV_API_KEY: "k"}))
+    monkeypatch.setattr(
+        ai, "generate_image", lambda *_a, **_k: generate.GenerateResult(None, "AI ล่ม")
+    )
+    response = client.post("/api/generate", json={"prompt": "แมว"})
+    assert response.status_code == 502
+    assert "AI ล่ม" in response.json()["detail"]
+
+
+def test_generate_endpoint_validates_prompt(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr("app.main._ai_settings", lambda: load_settings({ENV_API_KEY: "k"}))
+    response = client.post("/api/generate", json={"prompt": "   "})
+    assert response.status_code == 422
+
+
+def test_generate_endpoint_rejects_bad_count(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr("app.main._ai_settings", lambda: load_settings({ENV_API_KEY: "k"}))
+    response = client.post("/api/generate", json={"prompt": "แมว", "count": 99})
+    assert response.status_code == 422
+
+
+def test_health_lists_styles(client: TestClient) -> None:
+    data = client.get("/api/health").json()
+    styles = data["ai"]["styles"]
+    assert isinstance(styles, list) and len(styles) >= 4

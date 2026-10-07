@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>สมุดระบายสี A4</title>
+<title>สตูดิโอสมุดระบายสี A4</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -16,11 +16,11 @@
         <div class="brand">
           <span class="logo">🎨</span>
           <div>
-            <h1>สมุดระบายสี A4</h1>
-            <p class="subtitle">ลากภาพลายเส้นมาวาง แล้วกดสร้าง PDF ได้เลย</p>
+            <h1>สตูดิโอสมุดระบายสี A4</h1>
+            <p class="subtitle">ทำภาพใหม่ด้วย AI · ดึงภาพจากเว็บ · อัปโหลด — จบในที่เดียว ได้ PDF ทุกทาง</p>
           </div>
         </div>
-        <div class="header-badge"><span class="badge">v2.0</span></div>
+        <div class="header-badge"><span class="badge">v3.0</span></div>
       </div>
     </header>
 
@@ -29,56 +29,104 @@
       <div><strong>ระบบยังไม่พร้อมวาดข้อความภาษาไทย</strong><span id="brokenDetail"></span></div>
     </div>
 
-    <div id="notice" class="alert alert-info" role="status">
-      <span class="alert-icon">ℹ️</span>
-      <div><strong>โปรแกรมนี้ทำงานดีที่สุดกับภาพลายเส้น</strong><span>ภาพถ่ายจะได้เส้นตามภาพต้นฉบับเป็นค่าเริ่มต้น หากอยากได้ภาพการ์ตูนให้เปิดใช้ AI ด้านล่าง</span></div>
-    </div>
-
     <main class="main">
       <div class="grid">
-        <!-- LEFT: Upload & Images -->
+        <!-- LEFT: แหล่งภาพ 3 ช่องทาง -->
         <div class="column">
-          <section class="card">
-            <div class="card-header"><h2>อัปโหลดภาพ</h2><span class="card-hint">ลากวาง หรือเลือกไฟล์</span></div>
-            <div id="drop" class="dropzone" tabindex="0" role="button" aria-label="เลือกหรือลากภาพมาวางที่นี่">
-              <div class="dropzone-inner">
-                <div class="dropzone-icon">📁</div>
-                <p class="dropzone-main">ลากภาพมาวางที่นี่</p>
-                <p class="dropzone-sub">หรือ <button type="button" id="pick" class="linklike">เลือกไฟล์</button></p>
-                <p class="dropzone-paste">หรือกด <kbd>Ctrl</kbd> + <kbd>V</kbd> เพื่อวางรูปที่คัดลอกไว้</p>
-                <p class="dropzone-hint">รองรับ PNG, JPG, WEBP, BMP, TIFF · ความละเอียดแนะนำ 1500 พิกเซลขึ้นไป</p>
-              </div>
+          <section class="card source-card">
+            <div class="tabs" role="tablist" aria-label="แหล่งที่มาของภาพ">
+              <button type="button" id="tabGen" class="tab" role="tab" aria-selected="false">
+                <span class="tab-icon">✨</span><span class="tab-text">ทำภาพ<span class="tab-sub">สร้างใหม่ด้วย AI</span></span>
+              </button>
+              <button type="button" id="tabWeb" class="tab" role="tab" aria-selected="true">
+                <span class="tab-icon">🌐</span><span class="tab-text">ดึงภาพ<span class="tab-sub">จากเว็บ / Pinterest</span></span>
+              </button>
+              <button type="button" id="tabUpload" class="tab" role="tab" aria-selected="false">
+                <span class="tab-icon">📁</span><span class="tab-text">อัปโหลด<span class="tab-sub">ไฟล์ / วางรูป</span></span>
+              </button>
             </div>
-            <input type="file" id="picker" accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff" multiple hidden>
+
+            <!-- TAB 1: สร้างภาพด้วย AI -->
+            <div id="panelGen" class="tab-panel" hidden>
+              <div class="gen-form">
+                <label class="field"><span class="field-label">อยากได้ภาพระบายสีอะไร พิมพ์บอกได้เลย</span>
+                  <textarea id="genPrompt" rows="2" maxlength="600" placeholder="เช่น แมวการ์ตูนใส่หมวกอวกาศยืนบนดวงจันทร์"></textarea>
+                </label>
+                <div class="field">
+                  <span class="field-label">สไตล์ภาพ</span>
+                  <div id="genStyles" class="chips"></div>
+                </div>
+                <div class="gen-row">
+                  <label class="field"><span class="field-label">จำนวนภาพ</span>
+                    <select id="genCount">
+                      <option value="1" selected>1 ภาพ</option>
+                      <option value="2">2 ภาพ</option>
+                      <option value="3">3 ภาพ</option>
+                      <option value="4">4 ภาพ</option>
+                    </select>
+                  </label>
+                  <button type="button" id="genBtn" class="btn btn-primary btn-lg">✨ สร้างภาพ</button>
+                </div>
+                <p id="genAiNote" class="hint" hidden></p>
+              </div>
+              <div id="genResults" class="gen-results" hidden>
+                <div class="list-header">
+                  <div class="list-title"><h3>ภาพที่สร้างได้ <span id="genCountFound" class="pill">0</span></h3></div>
+                  <button type="button" id="genAddBtn" disabled class="btn btn-success">➕ เพิ่มที่เลือก (0) ลงในสมุด</button>
+                </div>
+                <div id="genImages" class="gen-grid"></div>
+              </div>
+              <p id="genStatus" class="status" role="status" aria-live="polite"></p>
+            </div>
+
+            <!-- TAB 2: ดึงภาพจากเว็บ -->
+            <div id="panelWeb" class="tab-panel">
+              <div class="web-url-box">
+                <label class="field"><span class="field-label">ลิงก์หน้าเว็บ · Pinterest · หรือลิงก์รูปตรง</span>
+                  <div class="input-group"><input type="url" id="webUrl" placeholder="https://www.pinterest.com/search/pins/?q=การ์ตูน" inputmode="url" autocomplete="off" spellcheck="false"><button type="button" id="fetchBtn" class="btn btn-primary">ค้นหา</button></div>
+                </label>
+                <p class="hint">ใส่ลิงก์หน้าเว็บที่มีรูป ลิงก์ค้นหาของ Pinterest หรือลิงก์รูปตรง 1 ลิงก์ ก็ได้</p>
+              </div>
+              <div id="webResults" class="web-results" hidden>
+                <div class="list-header"><div class="list-title"><h3>พบรูป <span id="webCount" class="pill">0</span></h3></div><button type="button" id="webSelectAll" class="btn btn-ghost" hidden>✓ เลือกทั้งหมด</button></div>
+                <div id="webImages" class="web-grid"></div>
+                <div class="actions"><button type="button" id="webAddBtn" disabled class="btn btn-success">➕ เพิ่มรูปที่เลือก (0) ลงในสมุด</button></div>
+              </div>
+              <p id="webStatus" class="status" role="status" aria-live="polite"></p>
+            </div>
+
+            <!-- TAB 3: อัปโหลด -->
+            <div id="panelUpload" class="tab-panel" hidden>
+              <div id="drop" class="dropzone" tabindex="0" role="button" aria-label="เลือกหรือลากภาพมาวางที่นี่">
+                <div class="dropzone-inner">
+                  <div class="dropzone-icon">📁</div>
+                  <p class="dropzone-main">ลากภาพมาวางที่นี่</p>
+                  <p class="dropzone-sub">หรือ <button type="button" id="pick" class="linklike">เลือกไฟล์</button></p>
+                  <p class="dropzone-paste">หรือกด <kbd>Ctrl</kbd> + <kbd>V</kbd> เพื่อวางรูปที่คัดลอกไว้</p>
+                  <p class="dropzone-hint">รองรับ PNG, JPG, WEBP, BMP, TIFF · ความละเอียดแนะนำ 1500 พิกเซลขึ้นไป</p>
+                </div>
+              </div>
+              <input type="file" id="picker" accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff" multiple hidden>
+              <p id="uploadStatus" class="status" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <section class="card">
             <div class="list-header">
-              <div class="list-title"><h3>ภาพในสมุด</h3><span id="count" class="pill">0</span></div>
+              <div class="list-title"><h2>📔 ภาพในสมุด</h2><span id="count" class="pill">0</span></div>
               <button type="button" id="clear" class="btn btn-ghost" hidden>🗑️ ล้างทั้งหมด</button>
             </div>
             <div id="imageGallery" class="image-gallery">
-              <div id="empty" class="empty-state"><span class="empty-icon">🖼️</span><p>ยังไม่มีภาพในสมุด</p><p class="empty-hint">เริ่มเพิ่มภาพด้วยการลากไฟล์มาวาง</p></div>
+              <div id="empty" class="empty-state"><span class="empty-icon">🖼️</span><p>ยังไม่มีภาพในสมุด</p><p class="empty-hint">เพิ่มภาพจากการสร้างด้วย AI ดึงจากเว็บ หรืออัปโหลดก็ได้</p></div>
               <ul id="items" class="image-list"></ul>
             </div>
           </section>
-          <section class="card">
-            <div class="card-header"><h2>🌐 ดึงรูปจากเว็บไซต์</h2><span class="card-hint">อัปโหลดจาก URL</span></div>
-            <div class="web-url-box">
-              <label class="field"><span class="field-label">ลิงก์เว็บไซต์</span>
-                <div class="input-group"><input type="url" id="webUrl" placeholder="https://example.com/gallery" inputmode="url" autocomplete="off" spellcheck="false"><button type="button" id="fetchBtn" class="btn btn-primary">ค้นหา</button></div>
-              </label>
-              <p class="hint">ใส่ลิงก์หน้าเว็บที่มีรูปภาพ แล้วเลือกเฉพาะรูปที่ต้องการเพิ่ม</p>
-            </div>
-            <div id="webResults" class="web-results" hidden>
-              <div class="list-header"><div class="list-title"><h3>พบรูป <span id="webCount" class="pill">0</span></h3></div><button type="button" id="webSelectAll" class="btn btn-ghost" hidden>✓ เลือกทั้งหมด</button></div>
-              <div id="webImages" class="web-grid"></div>
-              <div class="actions"><button type="button" id="webAddBtn" disabled class="btn btn-success">➕ เพิ่มรูปที่เลือก (0) ลงในสมุด</button></div>
-              <p id="webStatus" class="status" role="status" aria-live="polite"></p>
-            </div>
-          </section>
         </div>
+
         <!-- RIGHT: Settings -->
         <aside class="column">
           <section class="card settings-card">
-            <div class="card-header"><h2>⚙️ ตั้งค่า</h2></div>
+            <div class="card-header"><h2>⚙️ ตั้งค่าสมุด</h2></div>
             <div class="settings-form">
               <label class="field"><span class="field-label">ชื่อสมุด</span><input type="text" id="title" value="สมุดระบายสีของฉัน" maxlength="120" placeholder="เช่น สมุดระบายสีของน้อง"></label>
               <label class="field"><span class="field-label">ชื่อผู้เรียบเรียง <span class="muted">(เว้นว่างได้)</span></span><input type="text" id="author" maxlength="120" placeholder="เช่น สมุดระบายสีของน้อง"></label>
@@ -94,7 +142,7 @@
                 <label class="toggle"><input type="checkbox" id="pagenum" checked><span class="toggle-slider"></span><span class="toggle-label">มีเลขหน้า</span></label>
               </div>
               <div id="aiBox" class="ai-box" hidden>
-                <label class="toggle"><input type="checkbox" id="useAi"><span class="toggle-slider"></span><span class="toggle-label">ใช้ AI ช่วยแปลงภาพถ่ายเป็นภาพการ์ตูน</span></label>
+                <label class="toggle"><input type="checkbox" id="useAi"><span class="toggle-slider"></span><span class="toggle-label">ใช้ AI แปลงภาพถ่ายที่ดึง/อัปโหลดเป็นการ์ตูน</span></label>
                 <p class="hint" id="aiHint"></p>
               </div>
               <div class="actions">
@@ -105,7 +153,7 @@
             </div>
             <div id="previewWrap" class="preview-wrap" hidden><h3>ตัวอย่างหน้า A4</h3><img id="previewImg" alt="ตัวอย่างหน้า A4"></div>
           </section>
-          <footer class="footer"><p>📐 A4 · 300 DPI · เส้นดำบนพื้นขาว · พิมพ์แล้วระบายสีด้วยหมวกได้เลย</p></footer>
+          <footer class="footer"><p>📐 A4 · 300 DPI · เส้นดำบนพื้นขาว · พิมพ์แล้วระบายสีได้ทันที</p></footer>
         </aside>
       </div>
     </main>

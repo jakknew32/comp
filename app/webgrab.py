@@ -47,7 +47,7 @@ MIN_IMAGE_BYTES = 8 * 1024
 MAX_RESULTS = 60
 
 # ลิงก์ที่ดาวน์โหลดไม่ได้ ไม่ต้องรายงานกลับผู้ใช้ทุกอัน
-# เว็บมักมีรูปตัวแย่ง tracking pixel หรืองอไอคอนที่ 404 อยู่เสมอ
+# เว็บมักมีรูปตัวยัง tracking pixel หรือไอคอนที่ 404 อยู่เสมอ
 SKIP_URL_PATTERNS = (
     "data:image",
     "javascript:",
@@ -67,6 +67,38 @@ SKIP_URL_PATTERNS = (
     "twitter.com",
     "gravatar",
 )
+
+# Pinterest ซ่อนรูปไว้ใน JSON ก้อนใหญ่ในโค้ดหน้าเว็บ ไม่ได้อยู่ในแท็ก img ปกติ
+# จึงต้องสแกน HTML ดิบด้วย regex เพิ่มจากการแยกแท็กเดิม
+PINIMG_PATTERN = re.compile(
+    r"https://i\.pinimg\.com/(?:originals|\d+x)/[A-Za-z0-9_%\-.]+/"
+    r"[A-Za-z0-9_%\-.]+\.(?:jpg|jpeg|png|webp)",
+    re.IGNORECASE,
+)
+
+# ขนาดย่อที่ Pinterest ใช้ ต้องย้ายไปขนาดใหญ่กว่าเสมอ
+# 736x เป็นขนาดที่มีแทบทุกรูป (originals บางรูปไม่มีและจะ 403)
+PINIMG_TARGET_SIZE = "736x"
+PINIMG_SMALL_SIZES = ("170x", "236x", "474x")
+
+
+def upgrade_pinimg(url: str) -> str:
+    """ย้ายรูปของ Pinterest ไปยังขนาดใหญ่ที่สุดที่มีให้ดาวน์โหลด"""
+    result = re.sub(r"/(?:\d+x)/", f"/{PINIMG_TARGET_SIZE}/", url)
+    # รูปที่เป็น png/webp ที่ originals อาจไม่มี คงอยู่ที่ 736x ก็เพียงพอ
+    return result
+
+
+def extract_pinimg_urls(html: str) -> list[str]:
+    """ดึงลิงก์รูป Pinterest จาก HTML ดิบ รวมที่ซ่อนใน JSON"""
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in PINIMG_PATTERN.findall(html):
+        upgraded = upgrade_pinimg(match)
+        if upgraded not in seen:
+            seen.add(upgraded)
+            found.append(upgraded)
+    return found
 
 
 class WebImageError(ValueError):
@@ -219,6 +251,11 @@ def extract_image_urls(html: str, page_url: str) -> list[str]:
         if href.lower().split("?")[0].endswith(IMAGE_EXTENSIONS):
             add(href)
 
+    # รูปของ Pinterest ที่ฝังใน JSON ของหน้าเว็บ
+    # ผ่านการกรองชุดเดียวกับรูปอื่น ๆ โดยใช้ path ของหน้าเป็นฐาน
+    for pin_url in extract_pinimg_urls(html):
+        add(pin_url)
+
     return found[:MAX_RESULTS]
 
 
@@ -270,6 +307,10 @@ def list_images(url: str) -> list[dict]:
     host = urlparse(validated).netloc
     if _is_probably_private(host):
         raise WebImageError("ไม่สามารถดึงรูปจากเครือข่ายภายในได้")
+
+    # ลิงก์ที่ชี้ไปยังไฟล์รูปตรง ๆ ใช้ได้ทันที ไม่ต้องโหลดหน้าเว็บ
+    if urlparse(validated).path.lower().endswith(IMAGE_EXTENSIONS):
+        return [{"url": validated, "name": _clean_name(validated, 0)}]
 
     html = fetch_page(validated)
     urls = extract_image_urls(html, validated)

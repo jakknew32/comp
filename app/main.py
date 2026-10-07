@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from . import ai
+from .ai import generate as generate_module
 from .book import pdf as book_pdf
 from .config import (
     GRID_OPTIONS,
@@ -86,6 +87,16 @@ class BookPayload(BaseModel):
     show_page_number: bool = True
     include_cover: bool = True
     caption_size_pt: float = Field(default=20.0, ge=8.0, le=48.0)
+
+
+class GeneratePayload(BaseModel):
+    """คำขอสร้างภาพระบายสีจากข้อความ"""
+
+    prompt: str = Field(min_length=1, max_length=600)
+    style: str | None = None
+    count: int = Field(default=1, ge=1, le=4)
+    provider: str | None = None
+    model: str | None = None
 
 
 def to_lineart_params(payload: LineArtPayload | None) -> LineArtParams:
@@ -399,6 +410,49 @@ async def web_image(url: Annotated[str, Form()]) -> Response:
             "X-Image-Name": _encode_header([name]),
             "Cache-Control": "no-store",
         },
+    )
+
+
+@app.post("/api/generate")
+async def generate_images(payload: GeneratePayload) -> JSONResponse:
+    """สร้างภาพระบายสีใหม่จากข้อความด้วย AI
+
+    คืนภาพเป็น data URL ให้หน้าเว็บนำไปเพิ่มเข้าสมุดได้ทันที
+    สร้างทีละภาพ ถ้าภาพใดล้มเหลวจะข้ามและรายงานในช่อง failed
+    ไม่ทำให้ภาพอื่นที่สำเร็จแล้วหายไป
+    """
+    settings = _ai_settings()
+    if not settings.configured:
+        raise HTTPException(status_code=400, detail=settings.describe_missing())
+
+    prompt = payload.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=422, detail="กรุณาพิมพ์คำบรรยายภาพที่ต้องการ")
+
+    images: list[dict] = []
+    failed: list[str] = []
+    for _ in range(payload.count):
+        outcome = ai.generate_image(
+            prompt,
+            payload.style,
+            settings,
+            provider=payload.provider,
+            model=payload.model,
+        )
+        if outcome.ok:
+            images.append(
+                {"data": generate_module.to_png_data_url(outcome.image), "name": prompt}
+            )
+        elif outcome.note:
+            failed.append(outcome.note)
+
+    if not images:
+        detail = failed[0] if failed else "สร้างภาพไม่สำเร็จ"
+        raise HTTPException(status_code=502, detail=detail)
+
+    return JSONResponse(
+        {"images": images, "failed": failed},
+        headers={"Cache-Control": "no-store"},
     )
 
 

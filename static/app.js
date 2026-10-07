@@ -1,11 +1,13 @@
 "use strict";
 /** สถานะของหน้าเว็บทั้งหมดรวมอยู่ที่นี่ */
 const state = {
-  items: [],
+  items: [],          // ภาพในสมุด มาจากทุกแหล่ง
   selectedId: null,
   nextId: 1,
   busy: false,
-  found: [],
+  found: [],          // ผลค้นหารูปจากเว็บ
+  generated: [],      // ภาพที่ AI สร้างให้รอให้เลือก
+  style: "classic",
 };
 const GRID_LABELS = {
   1: "1 ภาพเต็มหน้า",
@@ -18,8 +20,24 @@ const GRID_LABELS = {
 const SPECKLE_STEPS = [null, 0.00002, 0.00004, 0.00008, 0.00015, 0.0003];
 const el = (id) => document.getElementById(id);
 const dom = {
-  drop: el("drop"), picker: el("picker"), pick: el("pick"), items: el("items"),
-  count: el("count"), empty: el("empty"), clear: el("clear"),
+  // แท็บ
+  tabGen: el("tabGen"), tabWeb: el("tabWeb"), tabUpload: el("tabUpload"),
+  panelGen: el("panelGen"), panelWeb: el("panelWeb"), panelUpload: el("panelUpload"),
+  // สร้างภาพ
+  genPrompt: el("genPrompt"), genStyles: el("genStyles"), genCount: el("genCount"),
+  genBtn: el("genBtn"), genResults: el("genResults"), genImages: el("genImages"),
+  genCountFound: el("genCountFound"), genAddBtn: el("genAddBtn"),
+  genStatus: el("genStatus"), genAiNote: el("genAiNote"),
+  // ดึงภาพจากเว็บ
+  webUrl: el("webUrl"), fetchBtn: el("fetchBtn"),
+  webResults: el("webResults"), webImages: el("webImages"),
+  webCount: el("webCount"), webStatus: el("webStatus"),
+  webAddBtn: el("webAddBtn"), webSelectAll: el("webSelectAll"),
+  // อัปโหลด
+  drop: el("drop"), picker: el("picker"), pick: el("pick"), uploadStatus: el("uploadStatus"),
+  // สมุด
+  items: el("items"), count: el("count"), empty: el("empty"), clear: el("clear"),
+  // ตั้งค่า
   title: el("title"), author: el("author"), perPage: el("perPage"),
   line: el("line"), lineOut: el("lineOut"), speckle: el("speckle"),
   speckleOut: el("speckleOut"), frame: el("frame"), cover: el("cover"),
@@ -28,22 +46,49 @@ const dom = {
   status: el("status"), previewWrap: el("previewWrap"), previewImg: el("previewImg"),
   broken: el("broken"), brokenDetail: el("brokenDetail"),
   aiBox: el("aiBox"), useAi: el("useAi"), aiHint: el("aiHint"),
-  notice: el("notice"), webUrl: el("webUrl"), fetchBtn: el("fetchBtn"),
-  webResults: el("webResults"), webImages: el("webImages"),
-  webCount: el("webCount"), webStatus: el("webStatus"),
-  webAddBtn: el("webAddBtn"), webSelectAll: el("webSelectAll"),
 };
+
+/* ---------- แท็บแหล่งภาพ ---------- */
+const TABS = [
+  { tab: dom.tabGen, panel: dom.panelGen },
+  { tab: dom.tabWeb, panel: dom.panelWeb },
+  { tab: dom.tabUpload, panel: dom.panelUpload },
+];
+function activateTab(targetTab) {
+  for (const { tab, panel } of TABS) {
+    const on = tab === targetTab;
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+    panel.hidden = !on;
+  }
+}
+function initTabs() {
+  for (const { tab } of TABS) {
+    tab.addEventListener("click", () => activateTab(tab));
+  }
+  activateTab(dom.tabWeb);
+}
+
+/* ---------- ตรวจสถานะเซิร์ฟเวอร์ ---------- */
 function applyAiStatus(status) {
-  if (!status || !status.configured) { dom.aiBox.hidden = true; return; }
+  if (!status) return;
+  if (status.styles && status.styles.length) buildStyleChips(status.styles);
+  if (!status.configured) {
+    dom.genAiNote.hidden = false;
+    dom.genAiNote.textContent =
+      "🔑 ยังไม่ได้ตั้งค่า AI — " + (status.message || "ต้องใส่คีย์ผู้ให้บริการที่ตัวแปรแวดล้อมของเซิร์ฟเวอร์ก่อน") +
+      " ช่องทางดึงภาพและอัปโหลดยังใช้ได้ปกติ";
+    return;
+  }
   const cost = status.estimated_cost_per_image_usd;
+  dom.genAiNote.hidden = false;
+  dom.genAiNote.textContent =
+    "โมเดล: " + (status.model || "-") +
+    (cost ? " · ค่าใช้จ่ายประมาณ " + cost + " USD ต่อภาพ" : "") +
+    " · คำบรรยายและผลลัพธ์จะผ่านผู้ให้บริการ AI";
   dom.aiBox.hidden = false;
   dom.aiHint.textContent =
-    "ใช้เฉพาะกับภาพถ่ายเท่านั้น ภาพลายเส้นจะไม่ถูกส่งให้ AI" +
-    (cost ? " · ค่าใช้จ่ายประมาณ " + cost + " USD ต่อภาพ" : "") +
-    " · ภาพจะถูกส่งออกนอกเครื่องนี้ผ่านผู้ให้บริการ AI";
-  dom.notice.querySelector("strong").textContent = "โปรแกรมนี้ทำงานดีที่สุดกับภาพลายเส้น";
-  dom.notice.lastChild.textContent =
-    " ภาพถ่ายจะได้เส้นตามภาพต้นฉบับเป็นค่าเริ่มต้น หากอยากได้ภาพการ์ตูนให้เปิดใช้ AI ด้านล่าง";
+    "ใช้เฉพาะกับภาพถ่ายที่ดึงมาหรืออัปโหลด ภาพลายเส้นอยู่แล้วจะไม่ถูกส่งให้ AI";
 }
 async function checkHealth() {
   try {
@@ -57,7 +102,8 @@ async function checkHealth() {
     dom.broken.hidden = false;
   } catch (_) {}
 }
-/* ---------- การแสดงผล ---------- */
+
+/* ---------- การแสดงผลทั่วไป ---------- */
 function setStatus(message, kind = "") {
   dom.status.textContent = message || "";
   dom.status.className = "status" + (kind ? " " + kind : "");
@@ -93,7 +139,7 @@ function renderItem(item) {
   input.addEventListener("focus", () => { select(item.id); });
   const tag = document.createElement("span");
   tag.className = "tag" + (item.warning ? " warn" : "");
-  tag.textContent = item.warning || "พร้อมใช้";
+  tag.textContent = item.warning || (item.source === "ai" ? "สร้างด้วย AI" : item.source === "web" ? "จากเว็บ" : "พร้อมใช้");
   body.append(name, input, tag);
   const remove = document.createElement("button");
   remove.type = "button"; remove.className = "btn btn-ghost"; remove.textContent = "🗑️ ลบ";
@@ -105,57 +151,144 @@ function renderItem(item) {
   return li;
 }
 function select(id) { state.selectedId = id; renderItems(); }
-/* ---------- การวางรูปจากคลิปบอร์ด ---------- */
-const AUTO_NAMES = new Set(["image", "blob", "unnamed", "screenshot"]);
-function imagesFromClipboard(clipboardData) {
-  if (!clipboardData) return [];
-  const files = [];
-  if (clipboardData.files && clipboardData.files.length) {
-    for (const file of clipboardData.files) {
-      if (file.type.startsWith("image/")) files.push(file);
-    }
-  }
-  if (files.length) return files;
-  if (clipboardData.items) {
-    for (const item of clipboardData.items) {
-      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
-      const file = item.getAsFile();
-      if (file) files.push(file);
-    }
-  }
-  return files;
+function defaultCaption(filename) {
+  const base = filename.split("/").pop().split("\\").pop();
+  const dot = base.lastIndexOf(".");
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  return stem || "ระบายสี";
 }
-function pastedCaption(file, index) {
-  const base = file.name.replace(/\.[^.]+$/, "").toLowerCase();
-  if (file.name && !AUTO_NAMES.has(base)) {
-    return defaultCaption(file.name);
+
+/* ---------- ที่ 1: สร้างภาพด้วย AI ---------- */
+function buildStyleChips(styles) {
+  dom.genStyles.replaceChildren();
+  for (const style of styles) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (style.key === state.style ? " on" : "");
+    chip.textContent = style.label;
+    chip.addEventListener("click", () => {
+      state.style = style.key;
+      for (const child of dom.genStyles.children) child.classList.remove("on");
+      chip.classList.add("on");
+    });
+    dom.genStyles.appendChild(chip);
   }
-  return "ภาพที่วาง " + index;
 }
-document.addEventListener("paste", (event) => {
-  const files = imagesFromClipboard(event.clipboardData);
-  if (files.length === 0) return;
-  const tag = document.activeElement && document.activeElement.tagName;
-  const inTextField = tag === "INPUT" || tag === "TEXTAREA";
-  if (!inTextField) event.preventDefault();
-  const startIndex = state.items.length + 1;
-  const prepared = files.map((file, index) => ({
-    file,
-    name: file.name || "pasted-image",
-    caption: pastedCaption(file, startIndex + index),
-    url: URL.createObjectURL(file),
-    warning: null,
-  }));
-  state.items.push(...prepared);
-  if (state.selectedId === null) state.selectedId = state.items[0].id;
-  renderItems();
-  setBusy(false);
-  setStatus(
-    `วางรูปจากคลิปบอร์ด ${files.length} รูป` +
-      (inTextField ? " (กดลอกช่องอื่นก่อนวางรูปได้สะดวกขึ้น)" : "")
-  );
-});
-/* ---------- ดึงรูปจากเว็บไซต์ ---------- */
+function setGenStatus(message, kind = "") {
+  dom.genStatus.textContent = message || "";
+  dom.genStatus.className = "status" + (kind ? " " + kind : "");
+}
+function renderGenerated() {
+  dom.genImages.replaceChildren();
+  dom.genCountFound.textContent = String(state.generated.length);
+  dom.genResults.hidden = state.generated.length === 0;
+  state.generated.forEach((entry, index) => {
+    const card = document.createElement("div");
+    card.className = "gen-image on"; card.dataset.index = index;
+    const picture = document.createElement("img");
+    picture.src = entry.data; picture.alt = "ภาพที่ AI สร้าง " + (index + 1);
+    const tick = document.createElement("span");
+    tick.className = "tick"; tick.textContent = "✓";
+    card.append(picture, tick);
+    card.addEventListener("click", () => {
+      card.classList.toggle("on");
+      syncGenSelection();
+    });
+    dom.genImages.appendChild(card);
+  });
+  syncGenSelection();
+}
+function syncGenSelection() {
+  const chosen = dom.genImages.querySelectorAll(".gen-image.on").length;
+  dom.genAddBtn.disabled = chosen === 0;
+  dom.genAddBtn.textContent =
+    chosen === 0 ? "➕ เพิ่มที่เลือก (0) ลงในสมุด" : `➕ เพิ่มที่เลือก (${chosen}) ลงในสมุด`;
+}
+async function dataUrlToFile(dataUrl, name) {
+  const response = await fetch(dataUrl);
+  const blob = await response.blob();
+  return new File([blob], name, { type: "image/png" });
+}
+async function generateImages() {
+  const prompt = dom.genPrompt.value.trim();
+  if (!prompt) {
+    setGenStatus("กรุณาพิมพ์คำบรรยายภาพที่ต้องการก่อน", "error");
+    dom.genPrompt.focus();
+    return;
+  }
+  dom.genBtn.disabled = true;
+  const count = parseInt(dom.genCount.value, 10) || 1;
+  setGenStatus("⏳ กำลังให้ AI วาดภาพ " + count + " ภาพ อาจใช้เวลาสักครู่...");
+  try {
+    const response = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        style: state.style,
+        count,
+      }),
+    });
+    if (!response.ok) {
+      setGenStatus(await readError(response), "error");
+      return;
+    }
+    const data = await response.json();
+    state.generated = (data.images || []).map((img) => ({ data: img.data, name: img.name }));
+    renderGenerated();
+    if (state.generated.length === 0) {
+      setGenStatus("ไม่ได้ภาพกลับมา ลองอีกครั้ง", "error");
+    } else {
+      const extra = data.failed && data.failed.length
+        ? " — ล้มเหลวบางส่วน: " + data.failed.join(" | ") : "";
+      setGenStatus("✨ ได้ภาพ " + state.generated.length + " ภาพ — เลือกแล้วกดเพิ่มลงในสมุด" + extra);
+    }
+  } catch (_) {
+    setGenStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");
+  } finally {
+    dom.genBtn.disabled = false;
+  }
+}
+async function addGeneratedToBook() {
+  const chosen = Array.from(dom.genImages.querySelectorAll(".gen-image.on"));
+  if (chosen.length === 0) return;
+  dom.genAddBtn.disabled = true;
+  const stamp = Date.now();
+  let added = 0;
+  for (const [i, card] of chosen.entries()) {
+    const entry = state.generated[Number(card.dataset.index)];
+    if (!entry) continue;
+    const caption = promptCaption(entry.name, stamp, added + 1);
+    const file = await dataUrlToFile(entry.data, caption + ".png");
+    state.items.push({
+      id: state.nextId++,
+      file,
+      name: file.name,
+      caption,
+      url: entry.data,
+      warning: null,
+      source: "ai",
+    });
+    added += 1;
+  }
+  if (added > 0) {
+    if (state.selectedId === null) state.selectedId = state.items[0].id;
+    renderItems();
+    setBusy(false);
+    setStatus("✨ เพิ่มภาพที่ AI สร้าง " + added + " ภาพเข้าสมุดแล้ว");
+  }
+  state.generated = [];
+  dom.genResults.hidden = true;
+  dom.genImages.replaceChildren();
+  dom.genPrompt.value = "";
+  setGenStatus("");
+}
+function promptCaption(prompt, stamp, order) {
+  const stem = prompt.replace(/\s+/g, " ").trim().slice(0, 40);
+  return stem ? stem + " " + order : "ภาพ AI " + stamp;
+}
+
+/* ---------- ที่ 2: ดึงรูปจากเว็บไซต์ ---------- */
 function renderWebImages() {
   dom.webImages.replaceChildren();
   if (state.found.length === 0) {
@@ -199,11 +332,11 @@ function setWebStatus(message, kind = "") {
 async function fetchWebImages() {
   const url = dom.webUrl.value.trim();
   if (!url) {
-    setWebStatus("กรุณาใส่ลิงก์เว็บไซต์ก่อน", "error");
+    setWebStatus("กรุณาใส่ลิงก์ก่อน", "error");
     return;
   }
   dom.fetchBtn.disabled = true;
-  setWebStatus("🔍 กำลังค้นหารูปในหน้าเว็บ...");
+  setWebStatus("🔍 กำลังค้นหารูป...");
   try {
     const response = await fetch("/api/web-images", {
       method: "POST",
@@ -219,7 +352,9 @@ async function fetchWebImages() {
     dom.webCount.textContent = String(state.found.length);
     dom.webResults.hidden = false;
     if (state.found.length === 0) {
-      setWebStatus("ไม่พบรูปภาพในหน้าเว็บนี้", "warn");
+      setWebStatus("ไม่พบรูปภาพจากลิงก์นี้", "warn");
+    } else if (state.found.length === 1) {
+      setWebStatus("พบลิงก์รูปตรง 1 รูป — กดเพิ่มลงในสมุดได้เลย");
     } else {
       setWebStatus(`พบ ${state.found.length} รูป — เลือกเฉพาะที่ต้องการ`);
     }
@@ -269,6 +404,7 @@ async function addSelectedWebImages() {
         caption: defaultCaption(filename),
         url: URL.createObjectURL(file),
         warning: null,
+        source: "web",
       });
       added += 1;
     } catch (_) {
@@ -307,11 +443,12 @@ function withImageExtension(name, mimeType) {
   };
   return name + "." + (byMime[mimeType] || "jpg");
 }
-/* ---------- จัดการไฟล์ ---------- */
+
+/* ---------- ที่ 3: อัปโหลดไฟล์ ---------- */
 function addFiles(fileList) {
   const files = Array.from(fileList).filter((f) => f.type.startsWith("image/"));
   if (files.length === 0) {
-    setStatus("ไม่พบไฟล์ภาพที่รองรับ", "error");
+    setUploadStatus("ไม่พบไฟล์ภาพที่รองรับ", "error");
     return;
   }
   for (const file of files) {
@@ -322,6 +459,7 @@ function addFiles(fileList) {
       caption: defaultCaption(file.name),
       url: URL.createObjectURL(file),
       warning: null,
+      source: "upload",
     });
   }
   if (state.selectedId === null) {
@@ -329,18 +467,74 @@ function addFiles(fileList) {
   }
   renderItems();
   setBusy(false);
+  setUploadStatus(`✅ เพิ่ม ${files.length} ภาพแล้ว`);
   setStatus(`✅ เพิ่ม ${files.length} ภาพแล้ว`);
 }
-function defaultCaption(filename) {
-  const base = filename.split("/").pop().split("\\").pop();
-  const dot = base.lastIndexOf(".");
-  const stem = dot > 0 ? base.slice(0, dot) : base;
-  return stem || "ระบายสี";
+function setUploadStatus(message, kind = "") {
+  dom.uploadStatus.textContent = message || "";
+  dom.uploadStatus.className = "status" + (kind ? " " + kind : "");
 }
+
+/* ---------- การวางรูปจากคลิปบอร์ด ---------- */
+const AUTO_NAMES = new Set(["image", "blob", "unnamed", "screenshot"]);
+function imagesFromClipboard(clipboardData) {
+  if (!clipboardData) return [];
+  const files = [];
+  if (clipboardData.files && clipboardData.files.length) {
+    for (const file of clipboardData.files) {
+      if (file.type.startsWith("image/")) files.push(file);
+    }
+  }
+  if (files.length) return files;
+  if (clipboardData.items) {
+    for (const item of clipboardData.items) {
+      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  return files;
+}
+function pastedCaption(file, index) {
+  const base = file.name.replace(/\.[^.]+$/, "").toLowerCase();
+  if (file.name && !AUTO_NAMES.has(base)) {
+    return defaultCaption(file.name);
+  }
+  return "ภาพที่วาง " + index;
+}
+document.addEventListener("paste", (event) => {
+  const files = imagesFromClipboard(event.clipboardData);
+  if (files.length === 0) return;
+  const tag = document.activeElement && document.activeElement.tagName;
+  const inTextField = tag === "INPUT" || tag === "TEXTAREA";
+  if (!inTextField) event.preventDefault();
+  const startIndex = state.items.length + 1;
+  const prepared = files.map((file, index) => ({
+    id: state.nextId++,
+    file,
+    name: file.name || "pasted-image",
+    caption: pastedCaption(file, startIndex + index),
+    url: URL.createObjectURL(file),
+    warning: null,
+    source: "upload",
+  }));
+  state.items.push(...prepared);
+  if (state.selectedId === null) state.selectedId = state.items[0].id;
+  renderItems();
+  setBusy(false);
+  activateTab(dom.tabUpload);
+  setUploadStatus(
+    `วางรูปจากคลิปบอร์ด ${files.length} รูป` +
+      (inTextField ? " (กดลอกช่องอื่นก่อนวางรูปได้สะดวกขึ้น)" : "")
+  );
+});
+
+/* ---------- จัดการรายการในสมุด ---------- */
 function removeItem(id) {
   const index = state.items.findIndex((i) => i.id === id);
   if (index === -1) return;
-  URL.revokeObjectURL(state.items[index].url);
+  const item = state.items[index];
+  if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
   state.items.splice(index, 1);
   if (state.selectedId === id) {
     state.selectedId = state.items.length ? state.items[0].id : null;
@@ -350,7 +544,9 @@ function removeItem(id) {
   setBusy(false);
 }
 function clearAll() {
-  for (const item of state.items) URL.revokeObjectURL(item.url);
+  for (const item of state.items) {
+    if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
+  }
   state.items = [];
   state.selectedId = null;
   dom.previewWrap.hidden = true;
@@ -358,6 +554,7 @@ function clearAll() {
   setBusy(false);
   setStatus("");
 }
+
 /* ---------- พารามิเตอร์ ---------- */
 function lineArtPayload() {
   const line = parseFloat(dom.line.value);
@@ -413,7 +610,8 @@ function downloadName(response) {
   const match = /filename="([^"]+)"/.exec(header);
   return match ? match[1] : "coloring-book.pdf";
 }
-/* ---------- การเรียกเซิร์ฟเวอร์ ---------- */
+
+/* ---------- การเรียกเซิร์ฟเวอร์: ตัวอย่างและ PDF ---------- */
 async function preview() {
   const item = state.items.find((i) => i.id === state.selectedId) || state.items[0];
   if (!item) return;
@@ -475,17 +673,6 @@ async function makeBook() {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(link.href), 30000);
-    const fallbackUrl = URL.createObjectURL(blob);
-    const fallbackLink = document.createElement("a");
-    fallbackLink.href = fallbackUrl;
-    fallbackLink.download = downloadName(response);
-    fallbackLink.textContent = "🔗 ดาวน์โหลด PDF (คลิกขวา > Save link as...)";
-    fallbackLink.style.cssText = "display:inline-block;margin-top:8px;padding:8px 12px;background:#d1fae5;border:1px solid #10b981;border-radius:6px;color:#065f46;text-decoration:none;font-size:14px;";
-    const existing = document.getElementById("fallbackDownload");
-    if (existing) existing.remove();
-    fallbackLink.id = "fallbackDownload";
-    dom.status.insertAdjacentElement("afterend", fallbackLink);
-    setTimeout(() => URL.revokeObjectURL(fallbackUrl), 300000);
     const pages = response.headers.get("X-Page-Count");
     const warn = decodeHeader(response.headers.get("X-Warnings"));
     if (warn) {
@@ -499,6 +686,7 @@ async function makeBook() {
     setBusy(false);
   }
 }
+
 /* ---------- เริ่มทำงาน ---------- */
 function init() {
   for (const [value, label] of Object.entries(GRID_LABELS)) {
@@ -508,6 +696,7 @@ function init() {
     if (value === "1") option.selected = true;
     dom.perPage.appendChild(option);
   }
+  initTabs();
   dom.pick.addEventListener("click", (e) => {
     e.stopPropagation();
     dom.picker.click();
@@ -545,6 +734,7 @@ function init() {
   dom.makeBtn.addEventListener("click", makeBook);
   dom.line.addEventListener("input", syncLabels);
   dom.speckle.addEventListener("input", syncLabels);
+  // ดึงภาพจากเว็บ
   dom.fetchBtn.addEventListener("click", fetchWebImages);
   dom.webAddBtn.addEventListener("click", addSelectedWebImages);
   dom.webSelectAll.addEventListener("click", () => {
@@ -557,6 +747,15 @@ function init() {
     if (event.key === "Enter") {
       event.preventDefault();
       fetchWebImages();
+    }
+  });
+  // สร้างภาพด้วย AI
+  dom.genBtn.addEventListener("click", generateImages);
+  dom.genAddBtn.addEventListener("click", addGeneratedToBook);
+  dom.genPrompt.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      generateImages();
     }
   });
   dom.previewImg.addEventListener("load", () => {
