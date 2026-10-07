@@ -417,6 +417,33 @@ input[type="range"] {
 .status.warn { color: var(--warn); }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .actions .btn-lg { flex: 1; }
+.download-ready {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #a7f3d0;
+  border-radius: 10px;
+  background: #ecfdf5;
+}
+.download-ready[hidden] { display: none; }
+.download-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.download-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.download-copy span { color: var(--ink-soft); font-size: 12.5px; }
+.download-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.download-actions .btn { text-decoration: none; }
 
 /* ---------- ตัวอย่างหน้า A4 ---------- */
 .preview-wrap { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
@@ -436,4 +463,6 @@ input[type="range"] {
   .brand h1 { font-size: 19px; }
   .toggles { grid-template-columns: 1fr; }
   .header-inner { padding: 14px 16px; }
+  .download-ready { align-items: stretch; flex-direction: column; }
+  .download-actions .btn { flex: 1; text-align: center; }
 }

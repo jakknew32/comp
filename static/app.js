@@ -5,6 +5,7 @@ const state = {
   selectedId: null,
   nextId: 1,
   busy: false,
+  latestPdfUrl: null,
   found: [],          // ผลค้นหารูปจากเว็บ
   generated: [],      // ภาพที่ AI สร้างให้รอให้เลือก
   style: "classic",
@@ -43,6 +44,9 @@ const dom = {
   speckleOut: el("speckleOut"), frame: el("frame"), cover: el("cover"),
   caption: el("caption"), pagenum: el("pagenum"),
   previewBtn: el("previewBtn"), makeBtn: el("makeBtn"),
+  downloadReady: el("downloadReady"), downloadTitle: el("downloadTitle"),
+  downloadMeta: el("downloadMeta"), downloadLink: el("downloadLink"),
+  openPdfBtn: el("openPdfBtn"),
   status: el("status"), previewWrap: el("previewWrap"), previewImg: el("previewImg"),
   broken: el("broken"), brokenDetail: el("brokenDetail"),
   aiBox: el("aiBox"), useAi: el("useAi"), aiHint: el("aiHint"),
@@ -107,6 +111,26 @@ async function checkHealth() {
 function setStatus(message, kind = "") {
   dom.status.textContent = message || "";
   dom.status.className = "status" + (kind ? " " + kind : "");
+}
+function clearDownloadResult() {
+  if (state.latestPdfUrl) URL.revokeObjectURL(state.latestPdfUrl);
+  state.latestPdfUrl = null;
+  dom.downloadReady.hidden = true;
+  dom.downloadLink.removeAttribute("href");
+  dom.downloadLink.removeAttribute("download");
+  dom.downloadMeta.textContent = "";
+}
+function showDownloadResult(blob, filename, pages) {
+  clearDownloadResult();
+  const url = URL.createObjectURL(blob);
+  state.latestPdfUrl = url;
+  dom.downloadLink.href = url;
+  dom.downloadLink.download = filename;
+  dom.downloadTitle.textContent = filename;
+  const sizeMb = blob.size / (1024 * 1024);
+  dom.downloadMeta.textContent =
+    (pages ? pages + " หน้า · " : "") + sizeMb.toFixed(2) + " MB";
+  dom.downloadReady.hidden = false;
 }
 function setBusy(busy) {
   state.busy = busy;
@@ -550,6 +574,7 @@ function clearAll() {
   state.items = [];
   state.selectedId = null;
   dom.previewWrap.hidden = true;
+  clearDownloadResult();
   renderItems();
   setBusy(false);
   setStatus("");
@@ -648,6 +673,7 @@ async function preview() {
 async function makeBook() {
   if (state.items.length === 0) return;
   setBusy(true);
+  clearDownloadResult();
   setStatus("⏳ กำลังสร้าง PDF...");
   const body = new FormData();
   for (const item of state.items) {
@@ -666,19 +692,20 @@ async function makeBook() {
       return;
     }
     const blob = await response.blob();
+    const filename = downloadName(response);
+    const pages = response.headers.get("X-Page-Count");
+    showDownloadResult(blob, filename, pages);
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = downloadName(response);
+    link.href = state.latestPdfUrl;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setTimeout(() => URL.revokeObjectURL(link.href), 30000);
-    const pages = response.headers.get("X-Page-Count");
     const warn = decodeHeader(response.headers.get("X-Warnings"));
     if (warn) {
-      setStatus(`สร้างเสร็จแล้ว` + (pages ? " " + pages + " หน้า" : "") + " — " + warn, "warn");
+      setStatus(`สร้างเสร็จแล้ว` + (pages ? " " + pages + " หน้า" : "") + " — ถ้าไฟล์ไม่เด้ง ให้กดปุ่มดาวน์โหลดด้านบนได้เลย — " + warn, "warn");
     } else {
-      setStatus("✅ สร้างเสร็จแล้ว" + (pages ? " " + pages + " หน้า" : ""));
+      setStatus("✅ สร้างเสร็จแล้ว" + (pages ? " " + pages + " หน้า" : "") + " — ถ้าไฟล์ไม่เด้ง ให้กดปุ่มดาวน์โหลดด้านบนได้เลย");
     }
   } catch (_) {
     setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");
@@ -732,6 +759,10 @@ function init() {
   dom.clear.addEventListener("click", clearAll);
   dom.previewBtn.addEventListener("click", preview);
   dom.makeBtn.addEventListener("click", makeBook);
+  dom.openPdfBtn.addEventListener("click", () => {
+    if (!state.latestPdfUrl) return;
+    window.open(state.latestPdfUrl, "_blank", "noopener");
+  });
   dom.line.addEventListener("input", syncLabels);
   dom.speckle.addEventListener("input", syncLabels);
   // ดึงภาพจากเว็บ

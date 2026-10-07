@@ -149,6 +149,16 @@
                 <button type="button" id="previewBtn" disabled class="btn btn-secondary">👁️ ดูตัวอย่างหน้า A4</button>
                 <button type="button" id="makeBtn" class="btn btn-primary btn-lg" disabled>📄 สร้าง PDF</button>
               </div>
+              <div id="downloadReady" class="download-ready" hidden>
+                <div class="download-copy">
+                  <strong id="downloadTitle">PDF พร้อมดาวน์โหลด</strong>
+                  <span id="downloadMeta"></span>
+                </div>
+                <div class="download-actions">
+                  <a id="downloadLink" class="btn btn-success" href="#" download>ดาวน์โหลด PDF</a>
+                  <button type="button" id="openPdfBtn" class="btn btn-secondary">เปิดดู</button>
+                </div>
+              </div>
               <p id="status" class="status" role="status" aria-live="polite"></p>
             </div>
             <div id="previewWrap" class="preview-wrap" hidden><h3>ตัวอย่างหน้า A4</h3><img id="previewImg" alt="ตัวอย่างหน้า A4"></div>

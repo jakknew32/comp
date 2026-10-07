@@ -42,12 +42,17 @@ const sandbox = {
   setStatus: (msg) => {
     lastStatus = msg;
   },
+  setUploadStatus: (msg) => {
+    lastStatus = msg;
+  },
+  activateTab: () => {},
+  dom: { tabUpload: {} },
 };
 
 const body = source
   .slice(
     source.indexOf("const AUTO_NAMES"),
-    source.indexOf("/* ---------- จัดการไฟล์ ---------- */")
+    source.indexOf("/* ---------- จัดการรายการในสมุด ---------- */")
   )
   .replace(/^const AUTO_NAMES = .*$/m, "");
 
