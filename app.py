@@ -214,12 +214,14 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### :material/tune: การปรับเส้นระบายสี (Line Art)")
-    target_line_mm = st.slider(
+    target_line_mm = st.selectbox(
         "ความหนาเส้นเป้าหมาย (มม.)",
-        min_value=0.5,
-        max_value=5.0,
-        value=2.5,
-        step=0.2,
+        options=[
+            0.5, 0.7, 0.9, 1.1, 1.3, 1.5, 1.7, 1.9, 2.1, 2.3,
+            2.5, 2.7, 2.9, 3.1, 3.3, 3.5, 3.7, 3.9, 4.1, 4.3,
+            4.5, 4.7, 4.9, 5.0,
+        ],
+        index=19,
     )
     strip_border = st.checkbox(
         "ตัดกรอบเดิมของภาพออกอัตโนมัติ",
