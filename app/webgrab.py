@@ -186,17 +186,18 @@ def _looks_like_image(url: str) -> bool:
     """
     path = urlparse(url).path.lower()
     
+    # URLs ที่มี size descriptors มักเป็น incomplete URLs หรือ thumbnail APIs
+    # เช่น "/image/20px" หรือ "/250px-name.svg" หรือ "/thumb" ให้ข้าม
+    # ต้องเช็คก่อนเช็ค image extension เพราะ Wikimedia URLs อาจมี .png ที่ท้ายแต่ยังคงเป็น incomplete
+    if re.search(r"(thumbnail|thumb|/\d+x[^/]*$|\d+w?px(?:[-/]|$))", path):
+        return False
+    
     # ตรวจสอบนามสกุล - ถ้าเป็นนามสกุลรูปให้ผ่าน
     if path.endswith(IMAGE_EXTENSIONS):
         return True
     
     # ถ้ามีนามสกุลอื่นที่ไม่ใช่รูป ให้ข้าม (เช่น .php, .html, .css)
     if re.search(r"\.[a-z0-9]{2,5}$", path) and not path.endswith("/"):
-        return False
-    
-    # URLs ที่ลงท้ายด้วยตัวเลขหรือ size descriptors มักเป็น incomplete URLs (เช่น thumbnail APIs)
-    # เช่น "/image/20px" หรือ "/thumb/250w" ให้ข้าม
-    if re.search(r"(thumbnail|thumb|thumb\d+|[\d]+[a-z]*w?px)$", path):
         return False
     
     # ถ้า URL ไม่มีนามสกุลและไม่ใช่ incomplete URL ให้ลองดาวน์โหลด
