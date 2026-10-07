@@ -28,6 +28,8 @@ CLOSE_KERNEL_STEP = 2
 # เมื่อ ink เพิ่มขึ้นน้อยกว่านี้เทียบกับรอบก่อน แปลว่าเต็มที่แล้ว
 # การปิดเพิ่มต่อจะไม่ได้ "เติม" แต่เริ่มไปรวมเส้นคนละเส้นเข้าหากัน ซึ่งไม่ต้องการ
 SATURATION_RATIO = 0.05
+HEAVY_INK_RATIO = 0.16
+HEAVY_INK_OUTLINE_RADIUS = 4.0
 
 
 @dataclass
@@ -185,6 +187,23 @@ def auto_close_kernel(mask: np.ndarray) -> tuple[int, np.ndarray]:
         kernel_size += CLOSE_KERNEL_STEP
 
     return best_kernel, best_mask
+
+
+def outline_heavy_ink(mask: np.ndarray, radius_px: float = HEAVY_INK_OUTLINE_RADIUS) -> np.ndarray:
+    """Turn large filled black regions into printable outlines.
+
+    Photos and web images often contain solid black shadows or patterns. Keeping
+    those areas as ink creates unusable coloring pages, so for ink-heavy masks we
+    retain only pixels close to a white boundary.
+    """
+    if mask.size == 0:
+        return mask
+    binary = np.where(mask >= 128, 255, 0).astype(np.uint8)
+    if not binary.any():
+        return binary
+    distance = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+    outlined = np.where((binary > 0) & (distance <= radius_px), 255, 0).astype(np.uint8)
+    return outlined if outlined.any() else binary
 
 
 def crop_to_ink(mask: np.ndarray, padding_ratio: float = 0.03) -> np.ndarray:
@@ -374,6 +393,12 @@ def convert(image: np.ndarray, params: LineArtParams | None = None) -> ConvertRe
         )
         for _ in range(params.close_iterations - 1):
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    if _ink_ratio(mask) > HEAVY_INK_RATIO:
+        mask = outline_heavy_ink(mask)
+        warnings.append(
+            "ภาพมีพื้นที่ดำทึบมาก จึงแปลงปื้นดำให้เหลือเฉพาะเส้นขอบเพื่อให้ระบายสีได้"
+        )
 
     mask = despeckle(mask, resolved["speckle_ratio"] * 0.5)
 

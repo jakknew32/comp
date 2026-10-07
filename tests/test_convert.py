@@ -106,6 +106,17 @@ def test_photo_does_not_crash_and_returns_something() -> None:
     assert any("ภาพถ่าย" in w for w in result.warnings)
 
 
+def test_heavy_ink_is_converted_to_outline() -> None:
+    mask = np.zeros((120, 160), np.uint8)
+    cv2.rectangle(mask, (20, 20), (140, 100), 255, thickness=-1)
+
+    outlined = convert.outline_heavy_ink(mask, radius_px=4)
+
+    assert outlined.sum() < mask.sum() * 0.35
+    assert outlined[60, 80] == 0
+    assert outlined[20, 80] == 255
+
+
 def test_existing_border_is_stripped() -> None:
     """ภาพที่มีกรอบมาติดมาต้องถูกตัดออก ไม่ให้ซ้อนกับกรอบของหน้า"""
     with_border = convert.convert(fixtures.synthetic_lineart(), LineArtParams())
