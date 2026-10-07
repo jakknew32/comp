@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw
 from ..config import (
     A4_HEIGHT_PX,
     A4_WIDTH_PX,
+    AUTO_TARGET_LINE_MM,
     CELL_GAP_MM,
     FRAME_RADIUS_MM,
     FRAME_STROKE_MM,
@@ -175,7 +176,7 @@ def render_content_page(
             mm_to_px(FRAME_RADIUS_MM),
         )
 
-    target_line_px = mm_to_px(lineart.target_line_mm or 2.5)
+    target_line_px = mm_to_px(lineart.target_line_mm or AUTO_TARGET_LINE_MM)
 
     for index, box in enumerate(boxes):
         if index >= len(masks):

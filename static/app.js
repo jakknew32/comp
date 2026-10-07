@@ -603,7 +603,7 @@ function bookPayload() {
 }
 function syncLabels() {
   const line = parseFloat(dom.line.value);
-  dom.lineOut.textContent = line === 0 ? "อัตโนมัติ" : line.toFixed(1) + " มม.";
+  dom.lineOut.textContent = line === 0 ? "พอดีอัตโนมัติ (1.0 มม.)" : line.toFixed(1) + " มม.";
   const speckleIndex = parseInt(dom.speckle.value, 10);
   dom.speckleOut.textContent =
     speckleIndex === 0 ? "อัตโนมัติ" : "ระดับ " + speckleIndex;

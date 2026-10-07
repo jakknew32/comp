@@ -12,6 +12,7 @@ from PIL import Image
 from ..config import (
     A4_HEIGHT_PX,
     A4_WIDTH_PX,
+    AUTO_TARGET_LINE_MM,
     COVER_GAP_MM,
     COVER_MAX_THUMBS,
     COVER_SUBTITLE_SIZE_PT,
@@ -160,7 +161,7 @@ def build_cover(
     notes: list[str] = []
 
     # เส้นบนหน้าปกบางกว่าเนื้อหา เพื่อไม่ให้แย่งความสนใจจากชื่อสมุด
-    target_line_px = mm_to_px((lineart.target_line_mm or 2.5) * 0.7)
+    target_line_px = mm_to_px((lineart.target_line_mm or AUTO_TARGET_LINE_MM) * 0.7)
 
     for index, box in enumerate(boxes):
         if index < count:

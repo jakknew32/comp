@@ -27,6 +27,7 @@ PAGE_MARGIN_MM = 12.0
 FRAME_RADIUS_MM = 8.0
 FRAME_STROKE_MM = 2.5
 CELL_GAP_MM = 6.0
+AUTO_TARGET_LINE_MM = 1.0
 
 CAPTION_SIZE_PT = 20.0
 PAGE_NUMBER_SIZE_PT = 12.0
@@ -73,7 +74,7 @@ class LineArtParams:
     ยกเว้น target_line_mm ที่มีค่าเริ่มต้นเป็นตัวเลขชัดเจน
     """
 
-    target_line_mm: float | None = 2.5
+    target_line_mm: float | None = None
     speckle_ratio: float | None = None
     denoise: int | None = None
     xdog_sigma: float | None = None

@@ -11,6 +11,7 @@ from PIL import Image
 from app.config import (
     A4_HEIGHT_PX,
     A4_WIDTH_PX,
+    AUTO_TARGET_LINE_MM,
     MM_PER_INCH,
     BookParams,
     LineArtParams,
@@ -147,6 +148,16 @@ def test_thicker_target_produces_more_ink() -> None:
         [make_mask()], ["x"], BookParams(), LineArtParams(target_line_mm=5.0), 0
     )
     assert ink_count(thick) > ink_count(thin)
+
+
+def test_auto_line_width_uses_print_friendly_default() -> None:
+    auto, _ = compose.render_content_page(
+        [make_mask()], ["x"], BookParams(), LineArtParams(target_line_mm=None), 0
+    )
+    explicit, _ = compose.render_content_page(
+        [make_mask()], ["x"], BookParams(), LineArtParams(target_line_mm=AUTO_TARGET_LINE_MM), 0
+    )
+    assert ink_count(auto) == ink_count(explicit)
 
 
 def test_empty_slots_leave_blank_space() -> None:
