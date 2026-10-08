@@ -367,7 +367,7 @@ async def make_book(
         media_type="application/pdf",
         headers={
             # ชื่อไฟล์ต้องมาจากฝั่งเซิร์ฟเวอร์เท่านั้น ห้ามใช้ชื่อที่ผู้ใช้ส่งมา
-            "Content-Disposition": f'attachment; filename="{filename}.pdf"',
+            "Content-Disposition": f'inline; filename="{filename}.pdf"',
             "X-Page-Count": str(result.page_count),
             "X-Warnings": _encode_header(all_warnings),
         },

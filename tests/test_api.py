@@ -153,7 +153,7 @@ def test_book_returns_pdf(client: TestClient) -> None:
     assert response.headers["content-type"] == "application/pdf"
     assert response.content.startswith(b"%PDF")
     assert response.headers["x-page-count"] == "3"
-    assert "attachment" in response.headers["content-disposition"]
+    assert "inline" in response.headers["content-disposition"]
 
 
 def test_book_uses_supplied_captions(client: TestClient) -> None:

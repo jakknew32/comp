@@ -1,0 +1,183 @@
+diff --git a/README.md b/README.md
+index 58dd88e..587dbb0 100644
+--- a/README.md
++++ b/README.md
+@@ -30,7 +30,7 @@ pip install -r requirements.txt
+ uvicorn app.main:app --reload
+ ```
+ 
+-เปิด <http://127.0.0.1:8000> แล้วลากภาพมาวาง กด **สร้าง PDF**
++เปิด <http://127.0.0.1:8000> แล้วลากภาพมาวาง กด **พิมพ์สมุดระบายสี** เพื่อเปิดหน้าต่างพิมพ์ของเบราว์เซอร์ (เลือกเครื่องพิมพ์ได้เลย ไม่ต้องบันทึกไฟล์ก่อน)
+ 
+ ไม่ต้องใช้ GPU และไม่ต้องต่ออินเทอร์เน็ตหลังติดตั้งเสร็จ
+ 
+diff --git a/app/main.py b/app/main.py
+index bc41892..7ec6265 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -367,7 +367,7 @@ async def make_book(
+         media_type="application/pdf",
+         headers={
+             # ชื่อไฟล์ต้องมาจากฝั่งเซิร์ฟเวอร์เท่านั้น ห้ามใช้ชื่อที่ผู้ใช้ส่งมา
+-            "Content-Disposition": f'attachment; filename="{filename}.pdf"',
++            "Content-Disposition": f'inline; filename="{filename}.pdf"',
+             "X-Page-Count": str(result.page_count),
+             "X-Warnings": _encode_header(all_warnings),
+         },
+diff --git a/static/app.js b/static/app.js
+index b0a505c..02118d3 100644
+--- a/static/app.js
++++ b/static/app.js
+@@ -45,7 +45,7 @@ const dom = {
+   caption: el("caption"), pagenum: el("pagenum"),
+   previewBtn: el("previewBtn"), makeBtn: el("makeBtn"),
+   downloadReady: el("downloadReady"), downloadTitle: el("downloadTitle"),
+-  downloadMeta: el("downloadMeta"), downloadLink: el("downloadLink"),
++  downloadMeta: el("downloadMeta"), printBtn: el("printBtn"),
+   openPdfBtn: el("openPdfBtn"),
+   status: el("status"), previewWrap: el("previewWrap"), previewImg: el("previewImg"),
+   broken: el("broken"), brokenDetail: el("brokenDetail"),
+@@ -116,16 +116,12 @@ function clearDownloadResult() {
+   if (state.latestPdfUrl) URL.revokeObjectURL(state.latestPdfUrl);
+   state.latestPdfUrl = null;
+   dom.downloadReady.hidden = true;
+-  dom.downloadLink.removeAttribute("href");
+-  dom.downloadLink.removeAttribute("download");
+   dom.downloadMeta.textContent = "";
+ }
+ function showDownloadResult(blob, filename, pages) {
+   clearDownloadResult();
+   const url = URL.createObjectURL(blob);
+   state.latestPdfUrl = url;
+-  dom.downloadLink.href = url;
+-  dom.downloadLink.download = filename;
+   dom.downloadTitle.textContent = filename;
+   const sizeMb = blob.size / (1024 * 1024);
+   dom.downloadMeta.textContent =
+@@ -138,7 +134,7 @@ function setBusy(busy) {
+   dom.previewBtn.disabled = busy || !hasItems;
+   dom.makeBtn.disabled = busy || !hasItems;
+   dom.previewBtn.textContent = busy ? "⏳ กำลังทำงาน..." : "👁️ ดูตัวอย่างหน้า A4";
+-  dom.makeBtn.textContent = busy ? "⏳ กำลังสร้าง..." : "📄 สร้าง PDF";
++  dom.makeBtn.textContent = busy ? "⏳ กำลังเตรียมพิมพ์..." : "🖨️ พิมพ์สมุดระบายสี";
+ }
+ function renderItems() {
+   dom.items.replaceChildren();
+@@ -632,7 +628,31 @@ function downloadName(response) {
+   return match ? match[1] : "coloring-book.pdf";
+ }
+ 
+-/* ---------- การเรียกเซิร์ฟเวอร์: ตัวอย่างและ PDF ---------- */
++/* ---------- สั่งพิมพ์ ---------- */
++let printFrame = null;
++function printLatest() {
++  if (!state.latestPdfUrl) return false;
++  if (printFrame) printFrame.remove();
++  const frame = document.createElement("iframe");
++  frame.setAttribute("aria-hidden", "true");
++  frame.style.cssText =
++    "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;";
++  frame.addEventListener("load", () => {
++    try {
++      frame.contentWindow.focus();
++      frame.contentWindow.print();
++    } catch (_) {
++      // เบราว์เซอร์บางตัวไม่อนุญาตให้พิมพ์จาก iframe → เปิดแท็บใหม่ให้กดพิมพ์เอง
++      window.open(state.latestPdfUrl, "_blank", "noopener");
++    }
++  });
++  frame.src = state.latestPdfUrl;
++  document.body.appendChild(frame);
++  printFrame = frame;
++  return true;
++}
++
++/* ---------- การเรียกเซิร์ฟเวอร์: ตัวอย่างและเอกสารพิมพ์ ---------- */
+ async function preview() {
+   const item = state.items.find((i) => i.id === state.selectedId) || state.items[0];
+   if (!item) return;
+@@ -670,7 +690,7 @@ async function makeBook() {
+   if (state.items.length === 0) return;
+   setBusy(true);
+   clearDownloadResult();
+-  setStatus("⏳ กำลังสร้าง PDF...");
++  setStatus("⏳ กำลังเตรียมเอกสารสำหรับพิมพ์...");
+   const body = new FormData();
+   for (const item of state.items) {
+     body.append("files", item.file, item.name);
+@@ -691,17 +711,12 @@ async function makeBook() {
+     const filename = downloadName(response);
+     const pages = response.headers.get("X-Page-Count");
+     showDownloadResult(blob, filename, pages);
+-    const link = document.createElement("a");
+-    link.href = state.latestPdfUrl;
+-    link.download = filename;
+-    document.body.appendChild(link);
+-    link.click();
+-    link.remove();
++    printLatest();
+     const warn = decodeHeader(response.headers.get("X-Warnings"));
+     if (warn) {
+-      setStatus(`สร้างเสร็จแล้ว` + (pages ? " " + pages + " หน้า" : "") + " — ถ้าไฟล์ไม่เด้ง ให้กดปุ่มดาวน์โหลดด้านบนได้เลย — " + warn, "warn");
++      setStatus("เปิดหน้าต่างพิมพ์แล้ว" + (pages ? " " + pages + " หน้า" : "") + " — ถ้าหน้าต่างไม่เด้ง ให้กดปุ่มพิมพ์อีกครั้งด้านบน — " + warn, "warn");
+     } else {
+-      setStatus("✅ สร้างเสร็จแล้ว" + (pages ? " " + pages + " หน้า" : "") + " — ถ้าไฟล์ไม่เด้ง ให้กดปุ่มดาวน์โหลดด้านบนได้เลย");
++      setStatus("✅ เปิดหน้าต่างพิมพ์แล้ว" + (pages ? " " + pages + " หน้า" : "") + " — ถ้าหน้าต่างไม่เด้ง ให้กดปุ่มพิมพ์อีกครั้งด้านบน");
+     }
+   } catch (_) {
+     setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");
+@@ -755,6 +770,7 @@ function init() {
+   dom.clear.addEventListener("click", clearAll);
+   dom.previewBtn.addEventListener("click", preview);
+   dom.makeBtn.addEventListener("click", makeBook);
++  dom.printBtn.addEventListener("click", printLatest);
+   dom.openPdfBtn.addEventListener("click", () => {
+     if (!state.latestPdfUrl) return;
+     window.open(state.latestPdfUrl, "_blank", "noopener");
+diff --git a/static/index.html b/static/index.html
+index b5ba46b..e9650d8 100644
+--- a/static/index.html
++++ b/static/index.html
+@@ -17,7 +17,7 @@
+           <span class="logo">🎨</span>
+           <div>
+             <h1>สตูดิโอสมุดระบายสี A4</h1>
+-            <p class="subtitle">ทำภาพใหม่ด้วย AI · ดึงภาพจากเว็บ · อัปโหลด — จบในที่เดียว ได้ PDF ทุกทาง</p>
++            <p class="subtitle">ทำภาพใหม่ด้วย AI · ดึงภาพจากเว็บ · อัปโหลด — จบในที่เดียว พิมพ์ได้ทุกทาง</p>
+           </div>
+         </div>
+         <div class="header-badge"><span class="badge">v3.0</span></div>
+@@ -171,16 +171,16 @@
+               </div>
+               <div class="actions">
+                 <button type="button" id="previewBtn" disabled class="btn btn-secondary">👁️ ดูตัวอย่างหน้า A4</button>
+-                <button type="button" id="makeBtn" class="btn btn-primary btn-lg" disabled>📄 สร้าง PDF</button>
++                <button type="button" id="makeBtn" class="btn btn-primary btn-lg" disabled>🖨️ พิมพ์สมุดระบายสี</button>
+               </div>
+               <div id="downloadReady" class="download-ready" hidden>
+                 <div class="download-copy">
+-                  <strong id="downloadTitle">PDF พร้อมดาวน์โหลด</strong>
++                  <strong id="downloadTitle">พร้อมพิมพ์แล้ว</strong>
+                   <span id="downloadMeta"></span>
+                 </div>
+                 <div class="download-actions">
+-                  <a id="downloadLink" class="btn btn-success" href="#" download>ดาวน์โหลด PDF</a>
+-                  <button type="button" id="openPdfBtn" class="btn btn-secondary">เปิดดู</button>
++                  <button type="button" id="printBtn" class="btn btn-success">🖨️ พิมพ์อีกครั้ง</button>
++                  <button type="button" id="openPdfBtn" class="btn btn-secondary">เปิดดูก่อนพิมพ์</button>
+                 </div>
+               </div>
+               <p id="status" class="status" role="status" aria-live="polite"></p>
+diff --git a/tests/test_api.py b/tests/test_api.py
+index 4658d7e..becefa9 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -153,7 +153,7 @@ def test_book_returns_pdf(client: TestClient) -> None:
+     assert response.headers["content-type"] == "application/pdf"
+     assert response.content.startswith(b"%PDF")
+     assert response.headers["x-page-count"] == "3"
+-    assert "attachment" in response.headers["content-disposition"]
++    assert "inline" in response.headers["content-disposition"]
+ 
+ 
+ def test_book_uses_supplied_captions(client: TestClient) -> None:

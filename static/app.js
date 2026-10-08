@@ -45,7 +45,7 @@ const dom = {
   caption: el("caption"), pagenum: el("pagenum"),
   previewBtn: el("previewBtn"), makeBtn: el("makeBtn"),
   downloadReady: el("downloadReady"), downloadTitle: el("downloadTitle"),
-  downloadMeta: el("downloadMeta"), downloadLink: el("downloadLink"),
+  downloadMeta: el("downloadMeta"), printBtn: el("printBtn"),
   openPdfBtn: el("openPdfBtn"),
   status: el("status"), previewWrap: el("previewWrap"), previewImg: el("previewImg"),
   broken: el("broken"), brokenDetail: el("brokenDetail"),
@@ -116,16 +116,12 @@ function clearDownloadResult() {
   if (state.latestPdfUrl) URL.revokeObjectURL(state.latestPdfUrl);
   state.latestPdfUrl = null;
   dom.downloadReady.hidden = true;
-  dom.downloadLink.removeAttribute("href");
-  dom.downloadLink.removeAttribute("download");
   dom.downloadMeta.textContent = "";
 }
 function showDownloadResult(blob, filename, pages) {
   clearDownloadResult();
   const url = URL.createObjectURL(blob);
   state.latestPdfUrl = url;
-  dom.downloadLink.href = url;
-  dom.downloadLink.download = filename;
   dom.downloadTitle.textContent = filename;
   const sizeMb = blob.size / (1024 * 1024);
   dom.downloadMeta.textContent =
@@ -138,7 +134,7 @@ function setBusy(busy) {
   dom.previewBtn.disabled = busy || !hasItems;
   dom.makeBtn.disabled = busy || !hasItems;
   dom.previewBtn.textContent = busy ? "⏳ กำลังทำงาน..." : "👁️ ดูตัวอย่างหน้า A4";
-  dom.makeBtn.textContent = busy ? "⏳ กำลังสร้าง..." : "📄 สร้าง PDF";
+  dom.makeBtn.textContent = busy ? "⏳ กำลังเตรียมพิมพ์..." : "🖨️ พิมพ์สมุดระบายสี";
 }
 function renderItems() {
   dom.items.replaceChildren();
@@ -632,7 +628,31 @@ function downloadName(response) {
   return match ? match[1] : "coloring-book.pdf";
 }
 
-/* ---------- การเรียกเซิร์ฟเวอร์: ตัวอย่างและ PDF ---------- */
+/* ---------- สั่งพิมพ์ ---------- */
+let printFrame = null;
+function printLatest() {
+  if (!state.latestPdfUrl) return false;
+  if (printFrame) printFrame.remove();
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText =
+    "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;";
+  frame.addEventListener("load", () => {
+    try {
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch (_) {
+      // เบราว์เซอร์บางตัวไม่อนุญาตให้พิมพ์จาก iframe → เปิดแท็บใหม่ให้กดพิมพ์เอง
+      window.open(state.latestPdfUrl, "_blank", "noopener");
+    }
+  });
+  frame.src = state.latestPdfUrl;
+  document.body.appendChild(frame);
+  printFrame = frame;
+  return true;
+}
+
+/* ---------- การเรียกเซิร์ฟเวอร์: ตัวอย่างและเอกสารพิมพ์ ---------- */
 async function preview() {
   const item = state.items.find((i) => i.id === state.selectedId) || state.items[0];
   if (!item) return;
@@ -670,7 +690,7 @@ async function makeBook() {
   if (state.items.length === 0) return;
   setBusy(true);
   clearDownloadResult();
-  setStatus("⏳ กำลังสร้าง PDF...");
+  setStatus("⏳ กำลังเตรียมเอกสารสำหรับพิมพ์...");
   const body = new FormData();
   for (const item of state.items) {
     body.append("files", item.file, item.name);
@@ -691,17 +711,12 @@ async function makeBook() {
     const filename = downloadName(response);
     const pages = response.headers.get("X-Page-Count");
     showDownloadResult(blob, filename, pages);
-    const link = document.createElement("a");
-    link.href = state.latestPdfUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    printLatest();
     const warn = decodeHeader(response.headers.get("X-Warnings"));
     if (warn) {
-      setStatus(`สร้างเสร็จแล้ว` + (pages ? " " + pages + " หน้า" : "") + " — ถ้าไฟล์ไม่เด้ง ให้กดปุ่มดาวน์โหลดด้านบนได้เลย — " + warn, "warn");
+      setStatus("เปิดหน้าต่างพิมพ์แล้ว" + (pages ? " " + pages + " หน้า" : "") + " — ถ้าหน้าต่างไม่เด้ง ให้กดปุ่มพิมพ์อีกครั้งด้านบน — " + warn, "warn");
     } else {
-      setStatus("✅ สร้างเสร็จแล้ว" + (pages ? " " + pages + " หน้า" : "") + " — ถ้าไฟล์ไม่เด้ง ให้กดปุ่มดาวน์โหลดด้านบนได้เลย");
+      setStatus("✅ เปิดหน้าต่างพิมพ์แล้ว" + (pages ? " " + pages + " หน้า" : "") + " — ถ้าหน้าต่างไม่เด้ง ให้กดปุ่มพิมพ์อีกครั้งด้านบน");
     }
   } catch (_) {
     setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");
@@ -755,6 +770,7 @@ function init() {
   dom.clear.addEventListener("click", clearAll);
   dom.previewBtn.addEventListener("click", preview);
   dom.makeBtn.addEventListener("click", makeBook);
+  dom.printBtn.addEventListener("click", printLatest);
   dom.openPdfBtn.addEventListener("click", () => {
     if (!state.latestPdfUrl) return;
     window.open(state.latestPdfUrl, "_blank", "noopener");
