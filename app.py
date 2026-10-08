@@ -36,9 +36,19 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-def render_print_button(pdf_bytes: bytes, label: str = "🖨️ พิมพ์สมุดระบายสี") -> None:
-    """แสดงปุ่มสั่งพิมพ์ PDF ผ่านหน้าต่างพิมพ์ของเบราว์เซอร์ (ไม่ต้องบันทึกไฟล์ก่อน)"""
-    b64 = base64.b64encode(pdf_bytes).decode("ascii")
+def page_to_png(image: Image.Image, width_px: int = 1654) -> bytes:
+    """ย่อหน้า A4 เป็น ~200 DPI ขาว-ดำ เพื่อให้ไฟล์เล็กพอสำหรับพรีวิวและสั่งพิมพ์"""
+    gray = image.convert("L")
+    height_px = round(width_px * gray.height / gray.width)
+    if gray.width > width_px:
+        gray = gray.resize((width_px, height_px), Image.LANCZOS)
+    buf = io.BytesIO()
+    gray.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def render_print_button(label: str = "🖨️ พิมพ์ทุกหน้า") -> None:
+    """ปุ่มสั่งพิมพ์ทุกหน้าที่แสดงในพรีวิว (ดึงภาพจากหน้าเว็บ ไม่ต้องส่งไฟล์ใหญ่ไปกลับ)"""
     components.html(
         f"""
 <style>
@@ -53,31 +63,50 @@ def render_print_button(pdf_bytes: bytes, label: str = "🖨️ พิมพ์�
 <button id="printBtn" type="button">{label}</button>
 <div id="msg"></div>
 <script>
-  const b64 = "{b64}";
-  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  const url = URL.createObjectURL(new Blob([bytes], {{ type: "application/pdf" }}));
   const msg = document.getElementById("msg");
   let frame = null;
-  function fallback() {{
-    const w = window.open(url, "_blank");
-    msg.textContent = w
-      ? "เปิดไฟล์ในแท็บใหม่แล้ว กด Ctrl+P เพื่อพิมพ์"
-      : "เบราว์เซอร์บล็อกหน้าต่างใหม่ กรุณาอนุญาต pop-up แล้วกดอีกครั้ง";
+  function pageUrls() {{
+    const doc = window.parent.document;
+    let imgs = Array.from(doc.querySelectorAll(".st-key-print_pages img"));
+    if (!imgs.length) imgs = Array.from(doc.querySelectorAll('[data-testid="stImage"] img'));
+    return imgs.map(i => new URL(i.currentSrc || i.src, window.parent.location.href).href);
+  }}
+  function buildHtml(urls) {{
+    return '<!doctype html><html><head><meta charset="utf-8"><style>' +
+      '@page {{ size: A4; margin: 0; }}' +
+      'html, body {{ margin: 0; padding: 0; background: #fff; }}' +
+      '.pg {{ width: 210mm; height: 296mm; overflow: hidden; break-after: page; page-break-after: always; }}' +
+      '.pg:last-child {{ break-after: auto; page-break-after: auto; }}' +
+      '.pg img {{ width: 210mm; height: 296mm; object-fit: contain; display: block; }}' +
+      '</style></head><body>' +
+      urls.map(u => '<div class="pg"><img src="' + u + '"></div>').join("") +
+      '</body></html>';
   }}
   document.getElementById("printBtn").addEventListener("click", () => {{
+    let urls = [];
+    try {{ urls = pageUrls(); }} catch (e) {{}}
+    if (!urls.length) {{
+      msg.textContent = "ไม่พบภาพหน้าสมุดสำหรับพิมพ์ กรุณาสร้างสมุดใหม่อีกครั้ง";
+      return;
+    }}
+    msg.textContent = "กำลังเตรียมพิมพ์ " + urls.length + " หน้า...";
     if (frame) frame.remove();
     frame = document.createElement("iframe");
     frame.style.cssText = "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;";
-    frame.onload = () => {{
+    frame.onload = async () => {{
       try {{
-        frame.contentWindow.focus();
-        frame.contentWindow.print();
+        const w = frame.contentWindow;
+        await Promise.all(Array.from(w.document.images).map(img =>
+          img.complete ? Promise.resolve() :
+          new Promise(r => {{ img.onload = r; img.onerror = r; }})));
+        w.focus();
+        w.print();
         msg.textContent = "";
       }} catch (e) {{
-        fallback();
+        msg.textContent = "สั่งพิมพ์ไม่สำเร็จ: " + e;
       }}
     }};
-    frame.src = url;
+    frame.srcdoc = buildHtml(urls);
     document.body.appendChild(frame);
   }});
 </script>
@@ -247,8 +276,8 @@ if "zip_buffer" not in st.session_state:
     st.session_state.zip_buffer = None
 if "selected_images" not in st.session_state:
     st.session_state.selected_images = set()
-if "pdf_buffer" not in st.session_state:
-    st.session_state.pdf_buffer = None
+if "page_pngs" not in st.session_state:
+    st.session_state.page_pngs = None
 
 
 # ----------------- Sidebar Options -----------------
@@ -570,12 +599,14 @@ with tab_convert:
 
                     st.write(f":material/menu_book: กำลังรวบรวมเข้าเล่ม A4 PDF ({len(masks)} หน้า)...")
                     try:
-                        book_res = book_pdf.build_book(
+                        page_images, _page_warnings = book_pdf.build_pages(
                             masks, captions, book_p, lineart_p
                         )
-                        st.session_state.pdf_buffer = book_res.pdf_bytes
+                        st.session_state.page_pngs = [
+                            page_to_png(im) for im in page_images
+                        ]
                         pdf_status.update(
-                            label=f"สร้างสมุดระบายสีสำเร็จ! ทั้งหมด {book_res.page_count} หน้า",
+                            label=f"สร้างสมุดระบายสีสำเร็จ! ทั้งหมด {len(page_images)} หน้า",
                             state="complete",
                         )
                     except Exception as e:
@@ -585,16 +616,32 @@ with tab_convert:
                         )
 
             # แสดงผลลัพธ์การสร้าง PDF
-            if st.session_state.pdf_buffer:
+            if st.session_state.page_pngs:
                 st.space("small")
+                pages_png = st.session_state.page_pngs
                 with st.container(border=True):
                     st.success(
-                        ":material/check_circle: สมุดระบายสี A4 พร้อมพิมพ์แล้ว! กดปุ่มพิมพ์ด้านขวาได้เลย",
+                        ":material/check_circle: สมุดระบายสี A4 พร้อมพิมพ์แล้ว! ตรวจดูทุกหน้าด้านล่าง แล้วกดปุ่มพิมพ์ได้เลย",
                         icon=":material/verified:",
                     )
-                    pdf_size_mb = len(st.session_state.pdf_buffer) / (1024 * 1024)
                     c_meta, c_dl = st.columns([2, 1], vertical_alignment="center")
                     with c_meta:
-                        st.write(f"📄 สมุดระบายสี A4 (ขนาด: {pdf_size_mb:.2f} MB)")
+                        st.write(f"📄 สมุดระบายสี A4 ทั้งหมด **{len(pages_png)} หน้า**")
                     with c_dl:
-                        render_print_button(st.session_state.pdf_buffer)
+                        render_print_button()
+
+                    st.write("ตัวอย่างทุกหน้า:")
+                    with st.container(key="print_pages"):
+                        per_row = 3
+                        for start in range(0, len(pages_png), per_row):
+                            row = st.columns(per_row)
+                            for offset, col in enumerate(row):
+                                idx = start + offset
+                                if idx >= len(pages_png):
+                                    break
+                                with col:
+                                    st.image(
+                                        pages_png[idx],
+                                        caption=f"หน้า {idx + 1}",
+                                        width="stretch",
+                                    )

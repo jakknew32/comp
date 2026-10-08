@@ -30,7 +30,18 @@ def build_book(
     book: BookParams,
     lineart: LineArtParams,
 ) -> BookResult:
-    """ประกอบสมุดทั้งเล่มแล้วคืนเป็น bytes ของ PDF
+    """ประกอบสมุดทั้งเล่มแล้วคืนเป็น bytes ของ PDF"""
+    images, warnings = build_pages(masks, captions, book, lineart)
+    return _to_pdf(images, warnings)
+
+
+def build_pages(
+    masks: list[np.ndarray],
+    captions: list[str],
+    book: BookParams,
+    lineart: LineArtParams,
+) -> tuple[list[Image.Image], list[str]]:
+    """ประกอบสมุดทั้งเล่มแล้วคืนเป็นภาพของแต่ละหน้า (ใช้พรีวิวและสั่งพิมพ์โดยไม่ต้องผ่าน PDF)
 
     masks คือภาพลายเส้นที่ผ่านการประมวลผลแล้ว ยังไม่ถูกย่อหรือหนาเส้นเพิ่ม
     ขั้นตอนเหล่านั้นทำใน compose ตอนวางลงหน้า เพราะต้องรู้ขนาดช่องก่อน
@@ -39,8 +50,7 @@ def build_book(
 
     if not masks:
         warnings.append("ไม่มีภาพที่ประมวลผลได้ จึงสร้างหน้าปกเปล่า")
-        pages = [cover.blank_cover(book)]
-        return _to_pdf(pages, warnings)
+        return [cover.blank_cover(book)], warnings
 
     content_pages = layout.plan_pages(len(masks), book)
     images: list[Image.Image] = []
@@ -76,7 +86,7 @@ def build_book(
             if note not in warnings:
                 warnings.append(note)
 
-    return _to_pdf(images, warnings)
+    return images, warnings
 
 
 def _to_pdf(images: list[Image.Image], warnings: list[str]) -> BookResult:
