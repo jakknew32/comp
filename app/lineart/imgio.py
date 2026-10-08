@@ -23,6 +23,10 @@ class ImageLoadError(ValueError):
     """เกิดข้อผิดพลาดตอนอ่านไฟล์ภาพ"""
 
 
+# ด้านยาวต่ำสุดที่ต้องการเก็บไว้ตอนถอดรหัส JPEG แบบย่อ (มากกว่าที่ใช้จริงทุกโหมด)
+DECODE_LONG_EDGE = 2400
+
+
 def imdecode(data: bytes) -> np.ndarray:
     """ถอดรหัส bytes เป็นภาพ BGR โดยไม่ผ่าน filesystem
 
@@ -34,6 +38,15 @@ def imdecode(data: bytes) -> np.ndarray:
 
     try:
         pil_img = Image.open(io.BytesIO(data))
+        # ภาพ JPEG ขนาดใหญ่มาก (เช่นรูปจากกล้องมือถือ 12-48 ล้านพิกเซล) ถอดรหัสแบบย่อได้เลย
+        # โปรแกรมนี้ใช้ด้านยาวแค่ ~2000 พิกเซลอยู่แล้ว การถอดเต็มขนาดจึงเปลืองหน่วยความจำ
+        # โดยเปล่าประโยชน์ และเป็นสาเหตุที่เซิร์ฟเวอร์แพ็กเกจเล็กถูกตัดเพราะ RAM เต็ม
+        if pil_img.format == "JPEG":
+            width, height = pil_img.size
+            long_edge = max(width, height)
+            if long_edge > DECODE_LONG_EDGE:
+                ratio = DECODE_LONG_EDGE / long_edge
+                pil_img.draft("RGB", (max(1, round(width * ratio)), max(1, round(height * ratio))))
         # PIL อ่านหัวไฟล์ตอน open แต่ถอดรหัสจริงตอน load
         # ไฟล์ที่ถูกตัดหรือเสียหายจะพังตรงนี้ ไม่ใช่ตอน open
         # จึงต้องอยู่ในบล็อก try เดียวกัน

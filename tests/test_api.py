@@ -336,3 +336,36 @@ def test_skip_convert_keeps_original_border(client: TestClient) -> None:
     # ภาพต้นฉบับขนาดเดิม และยังมีหมึกของกรอบอยู่ครบ
     assert kept.mask.shape == image.shape
     assert int(np.count_nonzero(kept.mask)) > int(np.count_nonzero(stripped.mask))
+
+
+# --- รวมเล่มด้วยรหัสอ้างอิง (ไม่อัปโหลดรูปซ้ำ) --------------------------------
+
+
+def test_pages_by_ref_uses_converted_results(client: TestClient) -> None:
+    refs = []
+    for name in ("a.png", "b.png"):
+        r = client.post(
+            "/api/convert",
+            files={"file": (name, png_bytes(fixtures.synthetic_lineart()), "image/png")},
+        )
+        assert r.status_code == 200
+        refs.append(r.json()["ref"])
+
+    response = client.post(
+        "/api/pages-by-ref", json={"refs": refs, "captions": ["หนึ่ง", "สอง"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["count"] == 3  # ปก + 2 หน้า
+
+
+def test_pages_by_ref_reports_missing(client: TestClient) -> None:
+    """รหัสที่ไม่มีในแคช ต้องตอบ 409 พร้อมลำดับรูปที่หาย ให้หน้าเว็บแปลงใหม่"""
+    ok = client.post(
+        "/api/convert",
+        files={"file": ("a.png", png_bytes(fixtures.synthetic_lineart()), "image/png")},
+    ).json()["ref"]
+    response = client.post(
+        "/api/pages-by-ref", json={"refs": [ok, "0" * 32], "captions": []}
+    )
+    assert response.status_code == 409
+    assert response.json()["missing"] == [1]

@@ -17,6 +17,7 @@ from typing import Annotated
 import numpy as np
 from PIL import Image
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -58,7 +59,8 @@ app = FastAPI(title="โปรแกรมสร้างสมุดระบ�
 # ผลลัพธ์ของแต่ละไฟล์ ใช้ซ้ำได้ตามชุดพารามิเตอร์ เพื่อไม่ต้องประมวลผลซ้ำ
 # เวลาผู้ใช้ลาก slider ไปมา คีย์คือแฮชของ bytes ไฟล์คู่กับค่าที่เกี่ยวข้อง
 _CACHE: dict[str, convert.ConvertResult] = {}
-_CACHE_LIMIT = 64
+_CACHE_LIMIT = 48
+_REFS: dict[str, str] = {}  # รหัสอ้างอิง -> คีย์ในแคช
 
 
 # --- โมเดลคำขอ ---------------------------------------------------------------
@@ -162,6 +164,15 @@ def _cache_key(raw: bytes, params: LineArtParams) -> str:
     return f"{digest}:{sorted(params.to_dict().items())}"
 
 
+def _ref_for(key: str) -> str:
+    """รหัสสั้นของผลแปลงในแคช ให้หน้าเว็บอ้างถึงตอนรวมเล่ม โดยไม่ต้องอัปโหลดรูปซ้ำ"""
+    import hashlib
+
+    ref = hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+    _REFS[ref] = key
+    return ref
+
+
 def convert_uploaded(
     raw: bytes, filename: str, params: LineArtParams
 ) -> tuple[convert.ConvertResult, np.ndarray, str, str]:
@@ -194,7 +205,10 @@ def convert_uploaded(
     notes.extend(result.warnings)
 
     if len(_CACHE) >= _CACHE_LIMIT:
-        _CACHE.pop(next(iter(_CACHE)))
+        evicted = next(iter(_CACHE))
+        _CACHE.pop(evicted)
+        for ref in [r for r, k in _REFS.items() if k == evicted]:
+            _REFS.pop(ref, None)
     _CACHE[key] = result
 
     return result, image, imgio.caption_from_filename(filename), " | ".join(notes)
@@ -286,7 +300,9 @@ async def preview(
 
     raw = await read_upload(file)
     try:
-        result, _, caption, _ = convert_uploaded(raw, file.filename or "ภาพ", lp)
+        result, _, caption, _ = await run_in_threadpool(
+            convert_uploaded, raw, file.filename or "ภาพ", lp
+        )
     except imgio.ImageLoadError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -296,7 +312,9 @@ async def preview(
             detail="ไม่พบเส้นในภาพนี้เลย ลองใช้ภาพที่เป็นภาพลายเส้นหรือเพิ่มความละเอียด",
         )
 
-    page, notes = book_pdf.render_preview(result.mask, caption, bp, lp)
+    page, notes = await run_in_threadpool(
+        book_pdf.render_preview, result.mask, caption, bp, lp
+    )
     return Response(
         content=_png_bytes(page),
         media_type="image/png",
@@ -412,7 +430,11 @@ async def convert_one(
     lp = to_lineart_params(parse_json(lineart, LineArtPayload))
     raw = await read_upload(file)
     try:
-        result, _, caption, notice = convert_uploaded(raw, file.filename or "ภาพ", lp)
+        # งานหนักต้องรันนอก event loop ไม่งั้นเซิร์ฟเวอร์จะไม่ตอบ health check ระหว่างแปลง
+        # แล้วโฮสต์อาจตัดมองว่าล่มและตอบ 502 ให้ผู้ใช้
+        result, _, caption, notice = await run_in_threadpool(
+            convert_uploaded, raw, file.filename or "ภาพ", lp
+        )
     except imgio.ImageLoadError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -424,7 +446,8 @@ async def convert_one(
         LINEART_THUMB_WIDTH_PX,
         invert=True,
     )
-    return JSONResponse({"caption": caption, "notice": notice, "thumb": thumb})
+    ref = _ref_for(_cache_key(raw, lp))
+    return JSONResponse({"caption": caption, "notice": notice, "thumb": thumb, "ref": ref})
 
 
 @app.post("/api/pages")
@@ -457,7 +480,9 @@ async def make_pages(
         raw = await read_upload(upload)
         name = upload.filename or f"ภาพที่ {index + 1}"
         try:
-            result, _, default_caption, warn = convert_uploaded(raw, name, lp)
+            result, _, default_caption, warn = await run_in_threadpool(
+                convert_uploaded, raw, name, lp
+            )
         except imgio.ImageLoadError as exc:
             skipped.append(f"{name}: {exc}")
             continue
@@ -480,11 +505,68 @@ async def make_pages(
             detail += " — " + "; ".join(skipped)
         raise HTTPException(status_code=422, detail=detail)
 
+    return await run_in_threadpool(
+        _render_pages_response, masks, names, bp, lp, warnings, skipped
+    )
+
+
+class PagesByRefPayload(BaseModel):
+    """รวมเล่มจากรูปที่แปลงไว้แล้วในขั้นแปลง ส่งแค่รหัสอ้างอิง ไม่ต้องอัปโหลดรูปซ้ำ"""
+
+    refs: list[str] = Field(min_length=1, max_length=200)
+    captions: list[str] = Field(default_factory=list)
+    lineart: LineArtPayload | None = None
+    book: BookPayload | None = None
+
+
+@app.post("/api/pages-by-ref")
+def make_pages_by_ref(payload: PagesByRefPayload) -> JSONResponse:
+    """รวมเล่มจากผลแปลงที่เก็บไว้ที่เซิร์ฟเวอร์ (เบากว่า /api/pages มาก)
+
+    ถ้าผลแปลงบางรูปหายไป (เซิร์ฟเวอร์รีสตาร์ท หรือแคชเต็มแล้วถูกเขี่ยทิ้ง)
+    จะตอบ 409 พร้อมลำดับของรูปที่หาย ให้หน้าเว็บแปลงเฉพาะรูปเหล่านั้นใหม่
+    """
+    lp = to_lineart_params(payload.lineart)
+    bp = to_book_params(payload.book)
+
+    masks: list[np.ndarray] = []
+    names: list[str] = []
+    missing: list[int] = []
+    for index, ref in enumerate(payload.refs):
+        key = _REFS.get(ref)
+        result = _CACHE.get(key) if key else None
+        if result is None or result.is_empty:
+            missing.append(index)
+            continue
+        masks.append(result.mask)
+        caption = payload.captions[index].strip() if index < len(payload.captions) else ""
+        names.append(caption or f"ภาพที่ {index + 1}")
+
+    if missing:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "ผลแปลงบางรูปหมดอายุแล้ว กรุณาแปลงรูปเหล่านั้นใหม่",
+                "missing": missing,
+            },
+        )
+    return _render_pages_response(masks, names, bp, lp, [], [])
+
+
+def _render_pages_response(
+    masks: list[np.ndarray],
+    names: list[str],
+    bp: BookParams,
+    lp: LineArtParams,
+    warnings: list[str],
+    skipped: list[str],
+) -> JSONResponse:
     page_warnings: list[str] = []
     pages: list[str] = []
     # แปลงทีละหน้าแล้วทิ้งภาพเต็ม ไม่ถือทุกหน้า 300 DPI ในหน่วยความจำพร้อมกัน
     for page_image in book_pdf.iter_pages(masks, names, bp, lp, page_warnings):
         pages.append(_data_url_png(page_image, PAGE_PREVIEW_WIDTH_PX))
+        del page_image
 
     return JSONResponse(
         {

@@ -701,6 +701,7 @@ async function convertAll() {
         const data = await response.json();
         item.warning = data.notice || null;
         item.lineThumb = data.thumb;
+        item.ref = data.ref;
         item.convertedKey = key;
         ok++;
       } catch (_) {
@@ -722,13 +723,35 @@ async function convertAll() {
 }
 
 /* ขั้นที่ 2: รวมเล่ม ได้ภาพ "ทุกหน้า" มาให้ดูและสั่งพิมพ์ */
+async function requestPages(usable) {
+  if (dom.skipConvert.checked) {
+    // ไม่แปลง: ส่งไฟล์ไปให้เซิร์ฟเวอร์ใช้ตามที่เป็น (เบามาก ไม่มีขั้นแปลง)
+    const body = new FormData();
+    for (const item of usable) body.append("files", item.file, item.name);
+    body.append("captions", JSON.stringify(usable.map((i) => i.caption)));
+    body.append("lineart", convertKey());
+    body.append("book", JSON.stringify(bookPayload()));
+    return fetch("/api/pages", { method: "POST", body });
+  }
+  // แปลงแล้ว: ส่งแค่รหัสอ้างอิงผลแปลงที่เก็บไว้ที่เซิร์ฟเวอร์ ไม่ต้องอัปโหลดรูปซ้ำ
+  return fetch("/api/pages-by-ref", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      refs: usable.map((i) => i.ref),
+      captions: usable.map((i) => i.caption),
+      lineart: JSON.parse(convertKey()),
+      book: bookPayload(),
+    }),
+  });
+}
 async function makeBook() {
   if (state.items.length === 0) return;
   // ถ้ายังมีรูปที่ยังไม่ได้แปลงด้วยค่าปัจจุบัน ให้แปลงให้ก่อนโดยอัตโนมัติ
   if (state.items.some((item) => !isConverted(item))) {
     await convertAll();
   }
-  const usable = state.items.filter((item) => isConverted(item));
+  let usable = state.items.filter((item) => isConverted(item));
   if (usable.length === 0) {
     setStatus("ไม่มีรูปที่แปลงสำเร็จ จึงรวมเล่มไม่ได้", "error");
     return;
@@ -736,13 +759,25 @@ async function makeBook() {
   setBusy(true, "book");
   clearPages();
   setStatus("⏳ กำลังรวมเล่ม...");
-  const body = new FormData();
-  for (const item of usable) body.append("files", item.file, item.name);
-  body.append("captions", JSON.stringify(usable.map((i) => i.caption)));
-  body.append("lineart", convertKey());
-  body.append("book", JSON.stringify(bookPayload()));
   try {
-    const response = await fetch("/api/pages", { method: "POST", body });
+    let response = await requestPages(usable);
+    if (response.status === 409) {
+      // ผลแปลงบางรูปหมดอายุที่เซิร์ฟเวอร์ (เช่นเซิร์ฟเวอร์รีสตาร์ท) → แปลงเฉพาะรูปเหล่านั้นใหม่แล้วลองอีกครั้ง
+      const info = await response.json();
+      for (const index of info.missing || []) {
+        if (usable[index]) usable[index].convertedKey = null;
+      }
+      setBusy(false);
+      await convertAll();
+      usable = state.items.filter((item) => isConverted(item));
+      if (usable.length === 0) {
+        setStatus("ไม่มีรูปที่แปลงสำเร็จ จึงรวมเล่มไม่ได้", "error");
+        return;
+      }
+      setBusy(true, "book");
+      setStatus("⏳ กำลังรวมเล่ม...");
+      response = await requestPages(usable);
+    }
     if (!response.ok) {
       setStatus(await readError(response), "error");
       return;
