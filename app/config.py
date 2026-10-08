@@ -86,6 +86,8 @@ class LineArtParams:
     ai_provider: str = "gemini"
     ai_model: str | None = None
     max_long_edge: int = 1400
+    # True = ใช้ภาพตามที่เป็น แค่ทำเป็นขาวดำ ไม่ลบเงา ไม่ตัดกรอบ ไม่ล้างจุดรบกวน
+    skip_convert: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)

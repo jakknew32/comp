@@ -437,6 +437,33 @@ def convert(image: np.ndarray, params: LineArtParams | None = None) -> ConvertRe
     )
 
 
+# ภาพที่ไม่ผ่านการแปลงยังย่อลงเล็กน้อยเพื่อคุมหน่วยความจำของแคชบนเซิร์ฟเวอร์
+PASSTHROUGH_MAX_LONG_EDGE = 2000
+
+
+def passthrough(image: np.ndarray) -> ConvertResult:
+    """ใช้ภาพตามที่เป็น: แค่ทำเป็นขาวดำเพื่อให้จัดหน้าได้ ไม่แปลงเป็นลายเส้น
+
+    สำหรับภาพที่เป็นลายเส้นพร้อมพิมพ์อยู่แล้ว จึงไม่ลบเงา ไม่ล้างจุดรบกวน
+    ไม่ปิดช่องว่างในเส้น และไม่ตัดกรอบเดิมออก
+    """
+    if image is None or image.size == 0:
+        raise ImageLoadError("ไม่พบข้อมูลภาพ")
+
+    work_image, work_scale = _downscale(image, PASSTHROUGH_MAX_LONG_EDGE)
+    gray = _to_gray(work_image)
+    mask = binarize(gray)
+    return ConvertResult(
+        mask=mask,
+        detection=detect.analyze(work_image),
+        source_stroke=measure.measure(mask),
+        close_kernel=0,
+        work_scale=work_scale,
+        used_xdog=False,
+        warnings=[],
+    )
+
+
 def _preview_mask(gray: np.ndarray) -> np.ndarray:
     """สร้าง mask คร่าวๆ ใช้วัดสถิติเพื่อเลือกพารามิเตอร์ก่อนประมวลผลจริง
 

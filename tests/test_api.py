@@ -303,3 +303,36 @@ def test_pages_rejects_when_nothing_usable(client: TestClient) -> None:
         "/api/pages", files=[("files", ("blank.png", png_bytes(blank), "image/png"))]
     )
     assert response.status_code == 422
+
+
+# --- รวมเล่มแบบไม่แปลง ------------------------------------------------------
+
+
+def test_pages_without_conversion(client: TestClient) -> None:
+    """เลือก skip_convert แล้วต้องรวมเล่มได้ โดยใช้ภาพตามที่เป็น"""
+    response = client.post(
+        "/api/pages",
+        files=[
+            ("files", ("a.png", png_bytes(fixtures.synthetic_lineart()), "image/png")),
+            ("files", ("b.png", png_bytes(fixtures.synthetic_lineart()), "image/png")),
+        ],
+        data={"lineart": json.dumps({"skip_convert": True})},
+    )
+    assert response.status_code == 200
+    assert response.json()["count"] == 3
+
+
+def test_skip_convert_keeps_original_border(client: TestClient) -> None:
+    """โหมดไม่แปลงต้องไม่ตัดกรอบเดิม ต่างจากโหมดแปลงปกติที่ตัดกรอบออก"""
+    from app.config import LineArtParams
+    from app.lineart import convert
+
+    image = np.full((1200, 900), 255, np.uint8)
+    cv2.rectangle(image, (30, 30), (870, 1170), 0, 12)
+    cv2.circle(image, (450, 600), 200, 0, 10)
+
+    kept = convert.passthrough(image)
+    stripped = convert.convert(image, LineArtParams(strip_border=True))
+    # ภาพต้นฉบับขนาดเดิม และยังมีหมึกของกรอบอยู่ครบ
+    assert kept.mask.shape == image.shape
+    assert int(np.count_nonzero(kept.mask)) > int(np.count_nonzero(stripped.mask))

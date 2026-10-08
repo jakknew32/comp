@@ -40,7 +40,7 @@ const dom = {
   items: el("items"), count: el("count"), empty: el("empty"), clear: el("clear"),
   // ตั้งค่า
   title: el("title"), author: el("author"), perPage: el("perPage"),
-  line: el("line"), speckle: el("speckle"),
+  line: el("line"), speckle: el("speckle"), skipConvert: el("skipConvert"),
   frame: el("frame"), cover: el("cover"),
   caption: el("caption"), pagenum: el("pagenum"),
   previewBtn: el("previewBtn"), convertBtn: el("convertBtn"), bookBtn: el("bookBtn"),
@@ -136,12 +136,15 @@ function showPages(pages) {
 }
 /* คีย์บอกว่าภาพถูกแปลงด้วยค่าชุดไหน ถ้าค่าเปลี่ยนต้องแปลงใหม่ */
 function convertKey() { return JSON.stringify(lineArtPayload()); }
-function isConverted(item) { return item.convertedKey === convertKey(); }
+/* รวมเล่มแบบไม่แปลง: ทุกรูปถือว่าพร้อมรวมเล่มทันที ไม่ต้องผ่านขั้นแปลง */
+function isConverted(item) {
+  return dom.skipConvert.checked || item.convertedKey === convertKey();
+}
 function setBusy(busy, label) {
   state.busy = busy;
   const hasItems = state.items.length > 0;
   dom.previewBtn.disabled = busy || !hasItems;
-  dom.convertBtn.disabled = busy || !hasItems;
+  dom.convertBtn.disabled = busy || !hasItems || dom.skipConvert.checked;
   dom.bookBtn.disabled = busy || !hasItems;
   dom.previewBtn.textContent = busy && label === "preview" ? "⏳ กำลังทำงาน..." : "👁️ ดูตัวอย่างหน้า A4";
   dom.convertBtn.textContent = busy && label === "convert" ? "⏳ กำลังแปลง..." : "✏️ 1. แปลงเป็นลายเส้น";
@@ -159,7 +162,7 @@ function renderItem(item) {
   li.className = "item" + (item.id === state.selectedId ? " selected" : "");
   const img = document.createElement("img");
   img.className = "thumb"; img.alt = item.name;
-  img.src = isConverted(item) && item.lineThumb ? item.lineThumb : item.url;
+  img.src = !dom.skipConvert.checked && isConverted(item) && item.lineThumb ? item.lineThumb : item.url;
   const body = document.createElement("div");
   body.className = "item-body";
   const name = document.createElement("span");
@@ -171,7 +174,7 @@ function renderItem(item) {
   input.addEventListener("focus", () => { select(item.id); });
   const tag = document.createElement("span");
   tag.className = "tag" + (item.warning ? " warn" : "");
-  tag.textContent = item.warning || (isConverted(item) ? "แปลงเป็นลายเส้นแล้ว ✓" : item.source === "ai" ? "สร้างด้วย AI" : item.source === "web" ? "จากเว็บ" : "ยังไม่ได้แปลง");
+  tag.textContent = item.warning || (dom.skipConvert.checked ? "ใช้ภาพตามที่เป็น" : isConverted(item) ? "แปลงเป็นลายเส้นแล้ว ✓" : item.source === "ai" ? "สร้างด้วย AI" : item.source === "web" ? "จากเว็บ" : "ยังไม่ได้แปลง");
   body.append(name, input, tag);
   const remove = document.createElement("button");
   remove.type = "button"; remove.className = "btn btn-ghost"; remove.textContent = "🗑️ ลบ";
@@ -596,6 +599,7 @@ function lineArtPayload() {
     target_line_mm: line === 0 ? null : line,
     speckle_ratio: SPECKLE_STEPS[speckleIndex],
     use_ai: dom.useAi.checked,
+    skip_convert: dom.skipConvert.checked,
   };
 }
 function bookPayload() {
@@ -847,6 +851,10 @@ function init() {
   dom.bookBtn.addEventListener("click", makeBook);
   dom.printBtn.addEventListener("click", printPages);
   // เปลี่ยนค่าที่มีผลกับการแปลง → ป้าย "แปลงแล้ว" ของรูปต้องอัปเดต
+  dom.skipConvert.addEventListener("change", () => {
+    renderItems();
+    setBusy(state.busy);
+  });
   for (const control of [dom.line, dom.speckle, dom.useAi]) {
     control.addEventListener("change", () => renderItems());
   }

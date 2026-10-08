@@ -78,6 +78,7 @@ class LineArtPayload(BaseModel):
     use_ai: bool = False
     ai_provider: str = "gemini"
     ai_model: str | None = None
+    skip_convert: bool = False
 
 
 class BookPayload(BaseModel):
@@ -116,6 +117,7 @@ def to_lineart_params(payload: LineArtPayload | None) -> LineArtParams:
         use_ai=payload.use_ai,
         ai_provider=payload.ai_provider,
         ai_model=payload.ai_model,
+        skip_convert=payload.skip_convert,
     )
 
 
@@ -175,7 +177,7 @@ def convert_uploaded(
     image = imgio.load_upload(raw, filename)
     notes: list[str] = []
 
-    if params.use_ai:
+    if params.use_ai and not params.skip_convert:
         outcome = ai.enhance(
             image, _ai_settings(), params.use_ai,
             provider=params.ai_provider,
@@ -185,7 +187,10 @@ def convert_uploaded(
             notes.append(outcome.note)
         image = outcome.image
 
-    result = convert.convert(image, params)
+    if params.skip_convert:
+        result = convert.passthrough(image)
+    else:
+        result = convert.convert(image, params)
     notes.extend(result.warnings)
 
     if len(_CACHE) >= _CACHE_LIMIT:
