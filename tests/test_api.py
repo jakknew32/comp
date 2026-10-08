@@ -153,7 +153,7 @@ def test_book_returns_pdf(client: TestClient) -> None:
     assert response.headers["content-type"] == "application/pdf"
     assert response.content.startswith(b"%PDF")
     assert response.headers["x-page-count"] == "3"
-    assert "inline" in response.headers["content-disposition"]
+    assert "attachment" in response.headers["content-disposition"]
 
 
 def test_book_uses_supplied_captions(client: TestClient) -> None:
@@ -246,3 +246,60 @@ def test_validate_falls_back_on_bad_per_page(client: TestClient) -> None:
         "/api/validate", data={"book": json.dumps({"per_page": 7})}
     ).json()
     assert data["book"]["per_page"] == 1
+
+
+# --- ขั้นแปลงรูปและขั้นรวมเล่ม (แยกกัน) ------------------------------------
+
+
+def test_convert_returns_thumbnail(client: TestClient) -> None:
+    response = client.post(
+        "/api/convert",
+        files={"file": ("a.png", png_bytes(fixtures.synthetic_lineart()), "image/png")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["thumb"].startswith("data:image/png;base64,")
+    assert data["caption"]
+
+
+def test_convert_rejects_blank_image(client: TestClient) -> None:
+    blank = np.full((600, 400), 255, np.uint8)
+    response = client.post(
+        "/api/convert", files={"file": ("blank.png", png_bytes(blank), "image/png")}
+    )
+    assert response.status_code == 422
+
+
+def test_pages_returns_every_page(client: TestClient) -> None:
+    """รวมเล่มต้องคืนภาพของทุกหน้า (ปก + 2 หน้าเนื้อหา) ไม่ใช่แค่หน้าเดียว"""
+    response = client.post(
+        "/api/pages",
+        files=[
+            ("files", ("a.png", png_bytes(fixtures.synthetic_lineart()), "image/png")),
+            ("files", ("b.png", png_bytes(fixtures.photocopied_lineart()), "image/png")),
+        ],
+        data={"captions": json.dumps(["หนึ่ง", "สอง"])},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 3
+    assert len(data["pages"]) == 3
+    assert all(p.startswith("data:image/png;base64,") for p in data["pages"])
+
+
+def test_pages_without_cover(client: TestClient) -> None:
+    response = client.post(
+        "/api/pages",
+        files=[("files", ("a.png", png_bytes(fixtures.synthetic_lineart()), "image/png"))],
+        data={"book": json.dumps({"include_cover": False})},
+    )
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+
+
+def test_pages_rejects_when_nothing_usable(client: TestClient) -> None:
+    blank = np.full((600, 400), 255, np.uint8)
+    response = client.post(
+        "/api/pages", files=[("files", ("blank.png", png_bytes(blank), "image/png"))]
+    )
+    assert response.status_code == 422

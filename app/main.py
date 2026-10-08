@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import logging
@@ -14,6 +15,7 @@ from functools import lru_cache
 from typing import Annotated
 
 import numpy as np
+from PIL import Image
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -367,10 +369,126 @@ async def make_book(
         media_type="application/pdf",
         headers={
             # ชื่อไฟล์ต้องมาจากฝั่งเซิร์ฟเวอร์เท่านั้น ห้ามใช้ชื่อที่ผู้ใช้ส่งมา
-            "Content-Disposition": f'inline; filename="{filename}.pdf"',
+            "Content-Disposition": f'attachment; filename="{filename}.pdf"',
             "X-Page-Count": str(result.page_count),
             "X-Warnings": _encode_header(all_warnings),
         },
+    )
+
+
+def _data_url_png(image: Image.Image, width_px: int, invert: bool = False) -> str:
+    """ย่อภาพเป็นขาวดำ (เฉดเทา) แล้วคืนเป็น data URL ของ PNG ใช้แสดงและพิมพ์ในหน้าเว็บ"""
+    gray = image.convert("L")
+    if invert:
+        gray = Image.eval(gray, lambda v: 255 - v)
+    if gray.width > width_px:
+        height_px = round(width_px * gray.height / gray.width)
+        gray = gray.resize((width_px, height_px), Image.LANCZOS)
+    buffer = io.BytesIO()
+    gray.save(buffer, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+# ขนาดภาพหน้าที่ส่งให้เบราว์เซอร์ ~200 DPI พอสำหรับพรีวิวและสั่งพิมพ์ ไฟล์ต่อหน้าเล็กกว่า PDF มาก
+PAGE_PREVIEW_WIDTH_PX = 1654
+LINEART_THUMB_WIDTH_PX = 360
+
+
+@app.post("/api/convert")
+async def convert_one(
+    file: Annotated[UploadFile, File()],
+    lineart: Annotated[str | None, Form()] = None,
+) -> JSONResponse:
+    """ขั้นที่ 1: แปลงภาพเดียวเป็นลายเส้น แล้วคืนภาพย่อ
+
+    ผลถูกเก็บในแคชของเซิร์ฟเวอร์ ตอนรวมเล่มภายหลังจึงไม่ต้องแปลงซ้ำ
+    และเพราะแปลงทีละรูป คำขอแต่ละครั้งสั้นพอไม่ถูกตัดด้วย timeout ของโฮสต์
+    """
+    lp = to_lineart_params(parse_json(lineart, LineArtPayload))
+    raw = await read_upload(file)
+    try:
+        result, _, caption, notice = convert_uploaded(raw, file.filename or "ภาพ", lp)
+    except imgio.ImageLoadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if result.is_empty:
+        raise HTTPException(status_code=422, detail="ไม่พบเส้นในภาพนี้เลย")
+
+    thumb = _data_url_png(
+        Image.fromarray(result.mask.astype(np.uint8)),
+        LINEART_THUMB_WIDTH_PX,
+        invert=True,
+    )
+    return JSONResponse({"caption": caption, "notice": notice, "thumb": thumb})
+
+
+@app.post("/api/pages")
+async def make_pages(
+    files: Annotated[list[UploadFile], File()],
+    lineart: Annotated[str | None, Form()] = None,
+    book: Annotated[str | None, Form()] = None,
+    captions: Annotated[str | None, Form()] = None,
+) -> JSONResponse:
+    """ขั้นที่ 2: รวมภาพเป็นสมุด แล้วคืนภาพของ "ทุกหน้า" สำหรับพรีวิวและสั่งพิมพ์"""
+    if not files:
+        raise HTTPException(status_code=400, detail="ยังไม่ได้เลือกภาพ")
+
+    lp = to_lineart_params(parse_json(lineart, LineArtPayload))
+    bp = to_book_params(parse_json(book, BookPayload))
+
+    try:
+        caption_list = json.loads(captions) if captions else []
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="รายการชื่อกำกับไม่ใช่ JSON ที่ถูกต้อง") from None
+    if not isinstance(caption_list, list):
+        raise HTTPException(status_code=400, detail="รายการชื่อกำกับต้องเป็น JSON array")
+
+    masks: list[np.ndarray] = []
+    names: list[str] = []
+    warnings: list[str] = []
+    skipped: list[str] = []
+
+    for index, upload in enumerate(files):
+        raw = await read_upload(upload)
+        name = upload.filename or f"ภาพที่ {index + 1}"
+        try:
+            result, _, default_caption, warn = convert_uploaded(raw, name, lp)
+        except imgio.ImageLoadError as exc:
+            skipped.append(f"{name}: {exc}")
+            continue
+        if result.is_empty:
+            skipped.append(f"{name}: ไม่พบเส้นในภาพ")
+            continue
+
+        caption = default_caption
+        if index < len(caption_list) and isinstance(caption_list[index], str):
+            caption = caption_list[index].strip() or default_caption
+
+        masks.append(result.mask)
+        names.append(caption)
+        if warn:
+            warnings.append(f"{name}: {warn}")
+
+    if not masks:
+        detail = "ไม่มีภาพใดที่ใช้ได้"
+        if skipped:
+            detail += " — " + "; ".join(skipped)
+        raise HTTPException(status_code=422, detail=detail)
+
+    page_warnings: list[str] = []
+    pages: list[str] = []
+    # แปลงทีละหน้าแล้วทิ้งภาพเต็ม ไม่ถือทุกหน้า 300 DPI ในหน่วยความจำพร้อมกัน
+    for page_image in book_pdf.iter_pages(masks, names, bp, lp, page_warnings):
+        pages.append(_data_url_png(page_image, PAGE_PREVIEW_WIDTH_PX))
+
+    return JSONResponse(
+        {
+            "count": len(pages),
+            "pages": pages,
+            "warnings": list(dict.fromkeys(warnings + page_warnings)),
+            "skipped": skipped,
+        },
+        headers={"Cache-Control": "no-store"},
     )
 
 

@@ -5,7 +5,7 @@ const state = {
   selectedId: null,
   nextId: 1,
   busy: false,
-  latestPdfUrl: null,
+  pages: [],          // ภาพทุกหน้าของสมุดที่รวมเล่มแล้ว (data URL)
   found: [],          // ผลค้นหารูปจากเว็บ
   generated: [],      // ภาพที่ AI สร้างให้รอให้เลือก
   style: "classic",
@@ -43,10 +43,9 @@ const dom = {
   line: el("line"), speckle: el("speckle"),
   frame: el("frame"), cover: el("cover"),
   caption: el("caption"), pagenum: el("pagenum"),
-  previewBtn: el("previewBtn"), makeBtn: el("makeBtn"),
-  downloadReady: el("downloadReady"), downloadTitle: el("downloadTitle"),
-  downloadMeta: el("downloadMeta"), printBtn: el("printBtn"),
-  openPdfBtn: el("openPdfBtn"),
+  previewBtn: el("previewBtn"), convertBtn: el("convertBtn"), bookBtn: el("bookBtn"),
+  pagesCard: el("pagesCard"), pagesGrid: el("pagesGrid"),
+  pagesCount: el("pagesCount"), printBtn: el("printBtn"),
   status: el("status"), previewWrap: el("previewWrap"), previewImg: el("previewImg"),
   broken: el("broken"), brokenDetail: el("brokenDetail"),
   aiBox: el("aiBox"), useAi: el("useAi"), aiHint: el("aiHint"),
@@ -112,29 +111,41 @@ function setStatus(message, kind = "") {
   dom.status.textContent = message || "";
   dom.status.className = "status" + (kind ? " " + kind : "");
 }
-function clearDownloadResult() {
-  if (state.latestPdfUrl) URL.revokeObjectURL(state.latestPdfUrl);
-  state.latestPdfUrl = null;
-  dom.downloadReady.hidden = true;
-  dom.downloadMeta.textContent = "";
+function clearPages() {
+  state.pages = [];
+  dom.pagesGrid.replaceChildren();
+  dom.pagesCount.textContent = "0";
+  dom.pagesCard.hidden = true;
 }
-function showDownloadResult(blob, filename, pages) {
-  clearDownloadResult();
-  const url = URL.createObjectURL(blob);
-  state.latestPdfUrl = url;
-  dom.downloadTitle.textContent = filename;
-  const sizeMb = blob.size / (1024 * 1024);
-  dom.downloadMeta.textContent =
-    (pages ? pages + " หน้า · " : "") + sizeMb.toFixed(2) + " MB";
-  dom.downloadReady.hidden = false;
+function showPages(pages) {
+  state.pages = pages;
+  dom.pagesGrid.replaceChildren();
+  pages.forEach((src, index) => {
+    const figure = document.createElement("figure");
+    figure.className = "page-thumb";
+    const img = document.createElement("img");
+    img.src = src; img.alt = "หน้า " + (index + 1); img.loading = "lazy";
+    img.addEventListener("click", () => window.open(src, "_blank", "noopener"));
+    const caption = document.createElement("figcaption");
+    caption.textContent = "หน้า " + (index + 1);
+    figure.append(img, caption);
+    dom.pagesGrid.appendChild(figure);
+  });
+  dom.pagesCount.textContent = String(pages.length);
+  dom.pagesCard.hidden = pages.length === 0;
 }
-function setBusy(busy) {
+/* คีย์บอกว่าภาพถูกแปลงด้วยค่าชุดไหน ถ้าค่าเปลี่ยนต้องแปลงใหม่ */
+function convertKey() { return JSON.stringify(lineArtPayload()); }
+function isConverted(item) { return item.convertedKey === convertKey(); }
+function setBusy(busy, label) {
   state.busy = busy;
   const hasItems = state.items.length > 0;
   dom.previewBtn.disabled = busy || !hasItems;
-  dom.makeBtn.disabled = busy || !hasItems;
-  dom.previewBtn.textContent = busy ? "⏳ กำลังทำงาน..." : "👁️ ดูตัวอย่างหน้า A4";
-  dom.makeBtn.textContent = busy ? "⏳ กำลังเตรียมพิมพ์..." : "🖨️ พิมพ์สมุดระบายสี";
+  dom.convertBtn.disabled = busy || !hasItems;
+  dom.bookBtn.disabled = busy || !hasItems;
+  dom.previewBtn.textContent = busy && label === "preview" ? "⏳ กำลังทำงาน..." : "👁️ ดูตัวอย่างหน้า A4";
+  dom.convertBtn.textContent = busy && label === "convert" ? "⏳ กำลังแปลง..." : "✏️ 1. แปลงเป็นลายเส้น";
+  dom.bookBtn.textContent = busy && label === "book" ? "⏳ กำลังรวมเล่ม..." : "📖 2. รวมเล่ม";
 }
 function renderItems() {
   dom.items.replaceChildren();
@@ -147,7 +158,8 @@ function renderItem(item) {
   const li = document.createElement("li");
   li.className = "item" + (item.id === state.selectedId ? " selected" : "");
   const img = document.createElement("img");
-  img.className = "thumb"; img.alt = item.name; img.src = item.url;
+  img.className = "thumb"; img.alt = item.name;
+  img.src = isConverted(item) && item.lineThumb ? item.lineThumb : item.url;
   const body = document.createElement("div");
   body.className = "item-body";
   const name = document.createElement("span");
@@ -159,7 +171,7 @@ function renderItem(item) {
   input.addEventListener("focus", () => { select(item.id); });
   const tag = document.createElement("span");
   tag.className = "tag" + (item.warning ? " warn" : "");
-  tag.textContent = item.warning || (item.source === "ai" ? "สร้างด้วย AI" : item.source === "web" ? "จากเว็บ" : "พร้อมใช้");
+  tag.textContent = item.warning || (isConverted(item) ? "แปลงเป็นลายเส้นแล้ว ✓" : item.source === "ai" ? "สร้างด้วย AI" : item.source === "web" ? "จากเว็บ" : "ยังไม่ได้แปลง");
   body.append(name, input, tag);
   const remove = document.createElement("button");
   remove.type = "button"; remove.className = "btn btn-ghost"; remove.textContent = "🗑️ ลบ";
@@ -570,7 +582,7 @@ function clearAll() {
   state.items = [];
   state.selectedId = null;
   dom.previewWrap.hidden = true;
-  clearDownloadResult();
+  clearPages();
   renderItems();
   setBusy(false);
   setStatus("");
@@ -622,41 +634,11 @@ function decodeHeader(value) {
     .filter(Boolean)
     .join(" · ");
 }
-function downloadName(response) {
-  const header = response.headers.get("Content-Disposition") || "";
-  const match = /filename="([^"]+)"/.exec(header);
-  return match ? match[1] : "coloring-book.pdf";
-}
-
-/* ---------- สั่งพิมพ์ ---------- */
-let printFrame = null;
-function printLatest() {
-  if (!state.latestPdfUrl) return false;
-  if (printFrame) printFrame.remove();
-  const frame = document.createElement("iframe");
-  frame.setAttribute("aria-hidden", "true");
-  frame.style.cssText =
-    "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;";
-  frame.addEventListener("load", () => {
-    try {
-      frame.contentWindow.focus();
-      frame.contentWindow.print();
-    } catch (_) {
-      // เบราว์เซอร์บางตัวไม่อนุญาตให้พิมพ์จาก iframe → เปิดแท็บใหม่ให้กดพิมพ์เอง
-      window.open(state.latestPdfUrl, "_blank", "noopener");
-    }
-  });
-  frame.src = state.latestPdfUrl;
-  document.body.appendChild(frame);
-  printFrame = frame;
-  return true;
-}
-
-/* ---------- การเรียกเซิร์ฟเวอร์: ตัวอย่างและเอกสารพิมพ์ ---------- */
+/* ---------- การเรียกเซิร์ฟเวอร์: ตัวอย่าง แปลงรูป และรวมเล่ม ---------- */
 async function preview() {
   const item = state.items.find((i) => i.id === state.selectedId) || state.items[0];
   if (!item) return;
-  setBusy(true);
+  setBusy(true, "preview");
   setStatus("⏳ กำลังสร้างตัวอย่าง...");
   const body = new FormData();
   body.append("file", item.file, item.name);
@@ -686,43 +668,135 @@ async function preview() {
     setBusy(false);
   }
 }
+/* ขั้นที่ 1: แปลงทีละรูป (คำขอสั้น เห็นความคืบหน้า และผลถูกเก็บไว้ที่เซิร์ฟเวอร์) */
+async function convertAll() {
+  if (state.items.length === 0) return false;
+  const key = convertKey();
+  const todo = state.items.filter((item) => item.convertedKey !== key);
+  if (todo.length === 0) {
+    setStatus("✅ แปลงครบทุกรูปแล้ว กด 'รวมเล่ม' ได้เลย");
+    return true;
+  }
+  setBusy(true, "convert");
+  let ok = 0;
+  let failed = 0;
+  try {
+    for (let i = 0; i < todo.length; i++) {
+      const item = todo[i];
+      setStatus(`⏳ กำลังแปลงรูปที่ ${i + 1} จาก ${todo.length}: ${item.name}`);
+      const body = new FormData();
+      body.append("file", item.file, item.name);
+      body.append("lineart", key);
+      try {
+        const response = await fetch("/api/convert", { method: "POST", body });
+        if (!response.ok) {
+          item.warning = await readError(response);
+          failed++;
+          continue;
+        }
+        const data = await response.json();
+        item.warning = data.notice || null;
+        item.lineThumb = data.thumb;
+        item.convertedKey = key;
+        ok++;
+      } catch (_) {
+        item.warning = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
+        failed++;
+      }
+      renderItems();
+    }
+  } finally {
+    renderItems();
+    setBusy(false);
+  }
+  if (failed > 0) {
+    setStatus(`แปลงสำเร็จ ${ok} รูป · ไม่สำเร็จ ${failed} รูป (ดูข้อความใต้รูปที่มีปัญหา)`, "warn");
+  } else {
+    setStatus(`✅ แปลงสำเร็จ ${ok} รูป — กด 'รวมเล่ม' ได้เลย`);
+  }
+  return ok > 0;
+}
+
+/* ขั้นที่ 2: รวมเล่ม ได้ภาพ "ทุกหน้า" มาให้ดูและสั่งพิมพ์ */
 async function makeBook() {
   if (state.items.length === 0) return;
-  setBusy(true);
-  clearDownloadResult();
-  setStatus("⏳ กำลังเตรียมเอกสารสำหรับพิมพ์...");
-  const body = new FormData();
-  for (const item of state.items) {
-    body.append("files", item.file, item.name);
+  // ถ้ายังมีรูปที่ยังไม่ได้แปลงด้วยค่าปัจจุบัน ให้แปลงให้ก่อนโดยอัตโนมัติ
+  if (state.items.some((item) => !isConverted(item))) {
+    await convertAll();
   }
-  body.append(
-    "captions",
-    JSON.stringify(state.items.map((i) => i.caption))
-  );
-  body.append("lineart", JSON.stringify(lineArtPayload()));
+  const usable = state.items.filter((item) => isConverted(item));
+  if (usable.length === 0) {
+    setStatus("ไม่มีรูปที่แปลงสำเร็จ จึงรวมเล่มไม่ได้", "error");
+    return;
+  }
+  setBusy(true, "book");
+  clearPages();
+  setStatus("⏳ กำลังรวมเล่ม...");
+  const body = new FormData();
+  for (const item of usable) body.append("files", item.file, item.name);
+  body.append("captions", JSON.stringify(usable.map((i) => i.caption)));
+  body.append("lineart", convertKey());
   body.append("book", JSON.stringify(bookPayload()));
   try {
-    const response = await fetch("/api/book", { method: "POST", body });
+    const response = await fetch("/api/pages", { method: "POST", body });
     if (!response.ok) {
       setStatus(await readError(response), "error");
       return;
     }
-    const blob = await response.blob();
-    const filename = downloadName(response);
-    const pages = response.headers.get("X-Page-Count");
-    showDownloadResult(blob, filename, pages);
-    printLatest();
-    const warn = decodeHeader(response.headers.get("X-Warnings"));
-    if (warn) {
-      setStatus("เปิดหน้าต่างพิมพ์แล้ว" + (pages ? " " + pages + " หน้า" : "") + " — ถ้าหน้าต่างไม่เด้ง ให้กดปุ่มพิมพ์อีกครั้งด้านบน — " + warn, "warn");
-    } else {
-      setStatus("✅ เปิดหน้าต่างพิมพ์แล้ว" + (pages ? " " + pages + " หน้า" : "") + " — ถ้าหน้าต่างไม่เด้ง ให้กดปุ่มพิมพ์อีกครั้งด้านบน");
-    }
+    const data = await response.json();
+    showPages(data.pages);
+    dom.pagesCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    const extra = (data.warnings || []).concat(data.skipped || []).join(" · ");
+    setStatus(
+      `✅ รวมเล่มแล้ว ${data.count} หน้า — ตรวจดูแล้วกด 'พิมพ์ทุกหน้า'` + (extra ? " — " + extra : ""),
+      extra ? "warn" : ""
+    );
   } catch (_) {
     setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");
   } finally {
     setBusy(false);
   }
+}
+
+/* สั่งพิมพ์ทุกหน้าจากภาพที่รวมเล่มแล้ว ไม่ต้องใช้ไฟล์ PDF */
+let printFrame = null;
+function printPages() {
+  if (state.pages.length === 0) {
+    setStatus("ยังไม่ได้รวมเล่ม กด 'รวมเล่ม' ก่อนพิมพ์", "warn");
+    return;
+  }
+  if (printFrame) printFrame.remove();
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText =
+    "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;";
+  const pagesHtml = state.pages
+    .map((src) => '<div class="pg"><img src="' + src + '"></div>')
+    .join("");
+  frame.srcdoc =
+    '<!doctype html><html><head><meta charset="utf-8"><style>' +
+    "@page{size:A4;margin:0}" +
+    "html,body{margin:0;padding:0;background:#fff}" +
+    ".pg{width:210mm;height:296mm;overflow:hidden;break-after:page;page-break-after:always}" +
+    ".pg:last-child{break-after:auto;page-break-after:auto}" +
+    ".pg img{display:block;width:210mm;height:296mm;object-fit:contain}" +
+    "</style></head><body>" + pagesHtml + "</body></html>";
+  frame.addEventListener("load", async () => {
+    try {
+      const win = frame.contentWindow;
+      await Promise.all(
+        Array.from(win.document.images).map((img) =>
+          img.complete ? Promise.resolve() : new Promise((r) => { img.onload = r; img.onerror = r; })
+        )
+      );
+      win.focus();
+      win.print();
+    } catch (err) {
+      setStatus("สั่งพิมพ์ไม่สำเร็จ: " + err, "error");
+    }
+  });
+  document.body.appendChild(frame);
+  printFrame = frame;
 }
 
 /* ---------- เริ่มทำงาน ---------- */
@@ -769,12 +843,13 @@ function init() {
   window.addEventListener("drop", (e) => e.preventDefault());
   dom.clear.addEventListener("click", clearAll);
   dom.previewBtn.addEventListener("click", preview);
-  dom.makeBtn.addEventListener("click", makeBook);
-  dom.printBtn.addEventListener("click", printLatest);
-  dom.openPdfBtn.addEventListener("click", () => {
-    if (!state.latestPdfUrl) return;
-    window.open(state.latestPdfUrl, "_blank", "noopener");
-  });
+  dom.convertBtn.addEventListener("click", convertAll);
+  dom.bookBtn.addEventListener("click", makeBook);
+  dom.printBtn.addEventListener("click", printPages);
+  // เปลี่ยนค่าที่มีผลกับการแปลง → ป้าย "แปลงแล้ว" ของรูปต้องอัปเดต
+  for (const control of [dom.line, dom.speckle, dom.useAi]) {
+    control.addEventListener("change", () => renderItems());
+  }
   // ดึงภาพจากเว็บ
   dom.fetchBtn.addEventListener("click", fetchWebImages);
   dom.webAddBtn.addEventListener("click", addSelectedWebImages);

@@ -41,19 +41,33 @@ def build_pages(
     book: BookParams,
     lineart: LineArtParams,
 ) -> tuple[list[Image.Image], list[str]]:
-    """ประกอบสมุดทั้งเล่มแล้วคืนเป็นภาพของแต่ละหน้า (ใช้พรีวิวและสั่งพิมพ์โดยไม่ต้องผ่าน PDF)
+    """ประกอบสมุดทั้งเล่มแล้วคืนเป็นภาพของแต่ละหน้า"""
+    warnings: list[str] = []
+    images = list(iter_pages(masks, captions, book, lineart, warnings))
+    return images, warnings
+
+
+def iter_pages(
+    masks: list[np.ndarray],
+    captions: list[str],
+    book: BookParams,
+    lineart: LineArtParams,
+    warnings: list[str],
+):
+    """สร้างทีละหน้าแล้วส่งออกทันที ผู้เรียกแปลงและทิ้งภาพได้ก่อนสร้างหน้าถัดไป
+
+    วิธีนี้ไม่ต้องถือภาพ A4 300 DPI ทุกหน้าไว้ในหน่วยความจำพร้อมกัน
+    ซึ่งสำคัญบนเซิร์ฟเวอร์ที่หน่วยความจำจำกัด
 
     masks คือภาพลายเส้นที่ผ่านการประมวลผลแล้ว ยังไม่ถูกย่อหรือหนาเส้นเพิ่ม
     ขั้นตอนเหล่านั้นทำใน compose ตอนวางลงหน้า เพราะต้องรู้ขนาดช่องก่อน
     """
-    warnings: list[str] = []
-
     if not masks:
         warnings.append("ไม่มีภาพที่ประมวลผลได้ จึงสร้างหน้าปกเปล่า")
-        return [cover.blank_cover(book)], warnings
+        yield cover.blank_cover(book)
+        return
 
     content_pages = layout.plan_pages(len(masks), book)
-    images: list[Image.Image] = []
 
     for page in content_pages:
         if page.is_cover:
@@ -61,10 +75,10 @@ def build_pages(
             cover_image, cover_notes = cover.build_cover(
                 masks, captions, book, lineart, total_pages=total
             )
-            images.append(cover_image)
             for note in cover_notes:
                 if note not in warnings:
                     warnings.append(note)
+            yield cover_image
             continue
 
         page_masks, page_captions = layout.masks_for_page(
@@ -81,12 +95,10 @@ def build_pages(
             lineart,
             page_number=content_number,
         )
-        images.append(image)
         for note in page_notes:
             if note not in warnings:
                 warnings.append(note)
-
-    return images, warnings
+        yield image
 
 
 def _to_pdf(images: list[Image.Image], warnings: list[str]) -> BookResult:

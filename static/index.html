@@ -121,6 +121,15 @@
               <ul id="items" class="image-list"></ul>
             </div>
           </section>
+
+          <section id="pagesCard" class="card" hidden>
+            <div class="list-header">
+              <div class="list-title"><h2>📖 สมุดทั้งเล่ม</h2><span id="pagesCount" class="pill">0</span></div>
+              <button type="button" id="printBtn" class="btn btn-success">🖨️ พิมพ์ทุกหน้า</button>
+            </div>
+            <p class="hint">ตรวจดูทุกหน้าก่อนพิมพ์ — ตอนพิมพ์ให้เลือกกระดาษ A4 และสเกล 100%</p>
+            <div id="pagesGrid" class="pages-grid"></div>
+          </section>
         </div>
 
         <!-- RIGHT: Settings -->
@@ -169,20 +178,12 @@
                 <label class="toggle"><input type="checkbox" id="useAi"><span class="toggle-slider"></span><span class="toggle-label">ใช้ AI แปลงภาพถ่ายที่ดึง/อัปโหลดเป็นการ์ตูน</span></label>
                 <p class="hint" id="aiHint"></p>
               </div>
-              <div class="actions">
+              <div class="actions actions-steps">
                 <button type="button" id="previewBtn" disabled class="btn btn-secondary">👁️ ดูตัวอย่างหน้า A4</button>
-                <button type="button" id="makeBtn" class="btn btn-primary btn-lg" disabled>🖨️ พิมพ์สมุดระบายสี</button>
+                <button type="button" id="convertBtn" disabled class="btn btn-secondary">✏️ 1. แปลงเป็นลายเส้น</button>
+                <button type="button" id="bookBtn" disabled class="btn btn-primary btn-lg">📖 2. รวมเล่ม</button>
               </div>
-              <div id="downloadReady" class="download-ready" hidden>
-                <div class="download-copy">
-                  <strong id="downloadTitle">พร้อมพิมพ์แล้ว</strong>
-                  <span id="downloadMeta"></span>
-                </div>
-                <div class="download-actions">
-                  <button type="button" id="printBtn" class="btn btn-success">🖨️ พิมพ์อีกครั้ง</button>
-                  <button type="button" id="openPdfBtn" class="btn btn-secondary">เปิดดูก่อนพิมพ์</button>
-                </div>
-              </div>
+              <p class="hint">แปลงรูปก่อน แล้วค่อยรวมเล่ม — ปรับค่าการจัดหน้า (ชื่อสมุด ปก เลขหน้า จำนวนภาพต่อหน้า) แล้วกดรวมเล่มซ้ำได้โดยไม่ต้องแปลงรูปใหม่</p>
               <p id="status" class="status" role="status" aria-live="polite"></p>
             </div>
             <div id="previewWrap" class="preview-wrap" hidden><h3>ตัวอย่างหน้า A4</h3><img id="previewImg" alt="ตัวอย่างหน้า A4"></div>
