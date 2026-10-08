@@ -1,0 +1,116 @@
+diff --git a/app.py b/app.py
+index 7c03be8..1978cba 100644
+--- a/app.py
++++ b/app.py
+@@ -1,3 +1,4 @@
++import base64
+ import io
+ import os
+ import re
+@@ -11,6 +12,7 @@ import numpy as np
+ from PIL import Image
+ import requests
+ import streamlit as st
++import streamlit.components.v1 as components
+ 
+ # เพิ่ม path ให้เรียกใช้ app package จาก repo comp ได้
+ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+@@ -34,6 +36,56 @@ st.set_page_config(
+     initial_sidebar_state="expanded",
+ )
+ 
++def render_print_button(pdf_bytes: bytes, label: str = "🖨️ พิมพ์สมุดระบายสี") -> None:
++    """แสดงปุ่มสั่งพิมพ์ PDF ผ่านหน้าต่างพิมพ์ของเบราว์เซอร์ (ไม่ต้องบันทึกไฟล์ก่อน)"""
++    b64 = base64.b64encode(pdf_bytes).decode("ascii")
++    components.html(
++        f"""
++<style>
++  html, body {{ margin: 0; font-family: "Source Sans", sans-serif; }}
++  button {{
++    width: 100%; padding: 0.55rem 0.75rem; font-size: 16px; font-weight: 600;
++    color: #fff; background: #ff4b4b; border: 0; border-radius: 0.5rem; cursor: pointer;
++  }}
++  button:hover {{ background: #e03e3e; }}
++  #msg {{ font-size: 12px; color: #888; margin-top: 4px; min-height: 14px; }}
++</style>
++<button id="printBtn" type="button">{label}</button>
++<div id="msg"></div>
++<script>
++  const b64 = "{b64}";
++  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
++  const url = URL.createObjectURL(new Blob([bytes], {{ type: "application/pdf" }}));
++  const msg = document.getElementById("msg");
++  let frame = null;
++  function fallback() {{
++    const w = window.open(url, "_blank");
++    msg.textContent = w
++      ? "เปิดไฟล์ในแท็บใหม่แล้ว กด Ctrl+P เพื่อพิมพ์"
++      : "เบราว์เซอร์บล็อกหน้าต่างใหม่ กรุณาอนุญาต pop-up แล้วกดอีกครั้ง";
++  }}
++  document.getElementById("printBtn").addEventListener("click", () => {{
++    if (frame) frame.remove();
++    frame = document.createElement("iframe");
++    frame.style.cssText = "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;";
++    frame.onload = () => {{
++      try {{
++        frame.contentWindow.focus();
++        frame.contentWindow.print();
++        msg.textContent = "";
++      }} catch (e) {{
++        fallback();
++      }}
++    }};
++    frame.src = url;
++    document.body.appendChild(frame);
++  }});
++</script>
++""",
++        height=70,
++    )
++
++
+ # Custom Styling ให้ขอบ เส้น และการ์ด คมชัด สวยงาม ทันสมัย
+ st.markdown(
+     """
+@@ -237,7 +289,7 @@ with st.container(border=True):
+     with col_title:
+         st.subheader("ระบบดูดรูปภาพจากเว็บ & สร้างสมุดระบายสี A4 (Coloring Book Creator)")
+         st.caption(
+-            "ดึงรูปภาพจากเว็บไซต์ แปลงเป็นลายเส้นขาว-ดำคมชัด และรวมเล่มเป็นไฟล์ PDF ขนาด A4 พร้อมพิมพ์ระบายสีทันที"
++            "ดึงรูปภาพจากเว็บไซต์ แปลงเป็นลายเส้นขาว-ดำคมชัด และรวมเล่มขนาด A4 แล้วสั่งพิมพ์ระบายสีได้ทันที"
+         )
+ 
+ 
+@@ -474,7 +526,7 @@ with tab_convert:
+                     )
+                 with c_action:
+                     btn_generate_pdf = st.button(
+-                        "สร้างสมุดระบายสี PDF",
++                        "สร้างสมุดระบายสี (เตรียมพิมพ์)",
+                         type="primary",
+                         icon=":material/picture_as_pdf:",
+                         width="stretch",
+@@ -537,20 +589,12 @@ with tab_convert:
+                 st.space("small")
+                 with st.container(border=True):
+                     st.success(
+-                        ":material/check_circle: สมุดระบายสี A4 พร้อมดาวน์โหลดแล้ว!",
++                        ":material/check_circle: สมุดระบายสี A4 พร้อมพิมพ์แล้ว! กดปุ่มพิมพ์ด้านขวาได้เลย",
+                         icon=":material/verified:",
+                     )
+                     pdf_size_mb = len(st.session_state.pdf_buffer) / (1024 * 1024)
+                     c_meta, c_dl = st.columns([2, 1], vertical_alignment="center")
+                     with c_meta:
+-                        st.write(f"📄 ชื่อไฟล์: **my_coloring.pdf** (ขนาด: {pdf_size_mb:.2f} MB)")
++                        st.write(f"📄 สมุดระบายสี A4 (ขนาด: {pdf_size_mb:.2f} MB)")
+                     with c_dl:
+-                        st.download_button(
+-                            label="ดาวน์โหลดไฟล์ PDF สมุดระบายสี",
+-                            data=st.session_state.pdf_buffer,
+-                            file_name="my_coloring.pdf",
+-                            mime="application/pdf",
+-                            type="primary",
+-                            icon=":material/download:",
+-                            width="stretch",
+-                        )
++                        render_print_button(st.session_state.pdf_buffer)
