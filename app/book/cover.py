@@ -1,10 +1,12 @@
 """สร้างหน้าปกของสมุดระบายสี
 
-หน้าปกใช้ตารางย่อภาพจริงจากเล่ม ไม่ใช่ภาพตัวอย่างแยก
-เพื่อให้ผู้ใช้เห็นว่าหน้าตาของสมุดหน้าตาที่จะได้จริง
+หน้าปกใช้ภาพจริงจากเล่มที่สุ่มมา 1 ภาพ ไม่ใช่ภาพตัวอย่างแยก
+เพื่อให้ผู้ใช้เห็นว่าหน้าตาของสมุดที่จะได้จริง
 """
 
 from __future__ import annotations
+
+import random
 
 import numpy as np
 from PIL import Image
@@ -14,7 +16,6 @@ from ..config import (
     A4_WIDTH_PX,
     AUTO_TARGET_LINE_MM,
     COVER_GAP_MM,
-    COVER_MAX_THUMBS,
     COVER_SUBTITLE_SIZE_PT,
     COVER_TITLE_SIZE_PT,
     FRAME_RADIUS_MM,
@@ -117,8 +118,12 @@ def build_cover(
     book: BookParams,
     lineart: LineArtParams,
     total_pages: int,
+    rng: random.Random | None = None,
 ) -> tuple[Image.Image, list[str]]:
-    """ประกอบหน้าปก 1 หน้า คืน (ภาพ, ข้อความเตือน)"""
+    """ประกอบหน้าปก 1 หน้า คืน (ภาพ, ข้อความเตือน)
+
+    สุ่มภาพจากเล่มมาวางบนหน้าปก 1 ภาพ (ส่ง rng เข้ามาเพื่อให้ผลซ้ำได้ตอนทดสอบ)
+    """
     page = compose.new_page()
 
     margin = mm_to_px(PAGE_MARGIN_MM)
@@ -155,22 +160,19 @@ def build_cover(
         inner.bottom - (subtitle_top + subtitle_mask.height + gap * 2),
     )
 
-    # หน้าปกไม่ควรมีภาพเยอะจนดูยุ่ง เก็บไว้ไม่เกิน 9 ภาพ
-    count = min(len(masks), COVER_MAX_THUMBS)
-    boxes = _cover_grid_boxes(grid_area, gap, count)
+    # หน้าปกใช้ภาพเดียว สุ่มมาจากภาพทั้งหมดในเล่ม ภาพใหญ่เต็มพื้นที่ดูสะอาดกว่าตารางภาพย่อ
     notes: list[str] = []
+    boxes = _cover_grid_boxes(grid_area, gap, 1 if masks else 0)
 
     # เส้นบนหน้าปกบางกว่าเนื้อหา เพื่อไม่ให้แย่งความสนใจจากชื่อสมุด
     target_line_px = mm_to_px((lineart.target_line_mm or AUTO_TARGET_LINE_MM) * 0.7)
 
-    for index, box in enumerate(boxes):
-        if index < count:
-            art, note = compose.place_artwork(masks[index], box, target_line_px)
-            if note and note not in notes:
-                notes.append(note)
-        else:
-            art = Image.new("L", (box.w, box.h), compose.WHITE)
-        page.paste(art, (box.x, box.y))
+    if boxes:
+        chooser = rng or random
+        art, note = compose.place_artwork(chooser.choice(masks), boxes[0], target_line_px)
+        if note:
+            notes.append(note)
+        page.paste(art, (boxes[0].x, boxes[0].y))
 
     center_x = inner.x + inner.w // 2
     page.paste(0, (center_x - title_mask.width // 2, title_top), title_mask)

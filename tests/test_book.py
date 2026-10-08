@@ -238,3 +238,24 @@ def test_every_grid_mode_builds(per_page: int) -> None:
     result = pdf.build_book(masks, ["ทดสอบ"] * 7, book, LineArtParams())
     expected_pages = 1 + -(-7 // layout.cells_per_page(book))
     assert result.page_count == expected_pages
+
+
+def test_cover_uses_exactly_one_random_image() -> None:
+    """หน้าปกใช้ภาพเดียว: ต่าง rng ต้องได้ภาพต่างกัน และ rng เดียวกันต้องได้ภาพเดิม"""
+    import random
+
+    import numpy as np
+
+    masks = []
+    for i in range(5):
+        m = np.zeros((600, 600), np.uint8)
+        m[100 + i * 70 : 130 + i * 70, 100:500] = 255  # แต่ละภาพมีแถบอยู่คนละตำแหน่ง
+        masks.append(m)
+    args = (masks, ["x"] * 5, BookParams(), LineArtParams(), 5)
+
+    a, _ = cover.build_cover(*args, rng=random.Random(1))
+    b, _ = cover.build_cover(*args, rng=random.Random(1))
+    assert a.tobytes() == b.tobytes()
+
+    variants = {cover.build_cover(*args, rng=random.Random(s))[0].tobytes() for s in range(12)}
+    assert len(variants) > 1
