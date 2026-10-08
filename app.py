@@ -47,10 +47,19 @@ def page_to_png(image: Image.Image, width_px: int = 1654) -> bytes:
     return buf.getvalue()
 
 
+def mask_thumb(mask: np.ndarray, width_px: int = 400) -> bytes:
+    """ภาพย่อของลายเส้น (เส้นดำบนพื้นขาว) สำหรับแสดงในหน้าเว็บ"""
+    img = Image.fromarray(255 - mask.astype(np.uint8))
+    if img.width > width_px:
+        img = img.resize((width_px, round(width_px * img.height / img.width)), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 def render_print_button(label: str = "🖨️ พิมพ์ทุกหน้า") -> None:
     """ปุ่มสั่งพิมพ์ทุกหน้าที่แสดงในพรีวิว (ดึงภาพจากหน้าเว็บ ไม่ต้องส่งไฟล์ใหญ่ไปกลับ)"""
-    components.html(
-        f"""
+    html = f"""
 <style>
   html, body {{ margin: 0; font-family: "Source Sans", sans-serif; }}
   button {{
@@ -110,9 +119,12 @@ def render_print_button(label: str = "🖨️ พิมพ์ทุกหน้�
     document.body.appendChild(frame);
   }});
 </script>
-""",
-        height=70,
-    )
+"""
+    # Streamlit รุ่นใหม่ใช้ st.iframe (components.html กำลังจะถูกเลิกใช้) รุ่นเก่าถอยกลับไปใช้ของเดิม
+    if hasattr(st, "iframe"):
+        st.iframe(html, height=70)
+    else:
+        components.html(html, height=70)
 
 
 # Custom Styling ให้ขอบ เส้น และการ์ด คมชัด สวยงาม ทันสมัย
@@ -278,6 +290,10 @@ if "selected_images" not in st.session_state:
     st.session_state.selected_images = set()
 if "page_pngs" not in st.session_state:
     st.session_state.page_pngs = None
+if "converted" not in st.session_state:
+    st.session_state.converted = []  # รูปที่แปลงเป็นลายเส้นแล้ว (ผลของขั้นที่ 2)
+if "uid_counter" not in st.session_state:
+    st.session_state.uid_counter = 0
 
 
 # ----------------- Sidebar Options -----------------
@@ -323,10 +339,11 @@ with st.container(border=True):
 
 
 # ----------------- Tabs: Workflow -----------------
-tab_scrape, tab_convert = st.tabs(
+tab_scrape, tab_convert, tab_book = st.tabs(
     [
         ":material/download: ขั้นที่ 1: ดึงรูปภาพจากเว็บไซต์",
-        ":material/menu_book: ขั้นที่ 2: แปลงลายเส้น & สร้างสมุด PDF",
+        ":material/draw: ขั้นที่ 2: แปลงรูปเป็นลายเส้น",
+        ":material/menu_book: ขั้นที่ 3: รวมเล่ม & พิมพ์",
     ]
 )
 
@@ -521,9 +538,12 @@ with tab_scrape:
                                 st.rerun()
 
 
-# ----------------- Tab 2: Convert to Line Art & Coloring PDF -----------------
+# ----------------- Tab 2: Convert images to line art -----------------
 with tab_convert:
-    st.subheader(":material/draw: แปลงเป็นภาพลายเส้นและรวมเล่มเป็น PDF (A4)")
+    st.subheader(":material/draw: ขั้นที่ 2: แปลงรูปเป็นภาพลายเส้น")
+    st.caption(
+        "แปลงครั้งเดียว ผลลัพธ์จะถูกเก็บไว้ใช้ในขั้นที่ 3 — ปรับค่าการรวมเล่มกี่ครั้งก็ไม่ต้องแปลงใหม่"
+    )
 
     if not HAS_COLORING_ENGINE:
         st.error(
@@ -532,116 +552,234 @@ with tab_convert:
     else:
         results = st.session_state.scraped_results
         selected_names = st.session_state.selected_images
-        items_to_convert = [
-            item for item in results if item["name"] in selected_names
+        sources = [
+            (item["name"], item["bytes"])
+            for item in results
+            if item["name"] in selected_names
         ]
 
-        if not items_to_convert:
+        uploads = st.file_uploader(
+            "หรืออัปโหลดรูปเอง (ข้ามขั้นที่ 1 ได้)",
+            type=["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"],
+            accept_multiple_files=True,
+            key="upload_src",
+        )
+        for up in uploads or []:
+            sources.append((up.name, up.getvalue()))
+
+        if not sources:
             st.info(
-                "ยังไม่มีรูปภาพที่ถูกเลือก กรุณาดึงรูปภาพจาก 'ขั้นที่ 1' แล้วติ๊กเลือกรูปภาพที่ต้องการครับ",
+                "ยังไม่มีรูปให้แปลง ไปเลือกรูปจาก 'ขั้นที่ 1' หรืออัปโหลดรูปด้านบนได้เลยครับ",
                 icon=":material/info:",
             )
         else:
             with st.container(border=True):
-                c_info, c_action = st.columns(
-                    [3, 1], vertical_alignment="center"
-                )
+                c_info, c_action = st.columns([3, 1], vertical_alignment="center")
                 with c_info:
-                    st.write(
-                        f"พร้อมประมวลผลทั้งหมด **{len(items_to_convert)} รูป** เพื่อสร้างเป็นสมุดระบายสี A4"
-                    )
-                    st.caption(
-                        f"ชื่อสมุด: **{book_title}** | จัดหน้า: **{per_page} รูป/หน้า** | ความหนาเส้น: **{target_line_mm} มม.**"
-                    )
+                    st.write(f"พร้อมแปลง **{len(sources)} รูป** เป็นภาพลายเส้น")
+                    st.caption(f"ความหนาเส้น: **{target_line_mm} มม.** | ตัดกรอบเดิม: **{'ใช่' if strip_border else 'ไม่'}**")
                 with c_action:
-                    btn_generate_pdf = st.button(
-                        "สร้างสมุดระบายสี (เตรียมพิมพ์)",
+                    btn_convert = st.button(
+                        "แปลงเป็นลายเส้น",
                         type="primary",
-                        icon=":material/picture_as_pdf:",
+                        icon=":material/draw:",
                         width="stretch",
                     )
 
-            if btn_generate_pdf:
-                with st.status(
-                    "กำลังแปลงรูปเป็นภาพลายเส้นและจัดหน้า PDF...", expanded=True
-                ) as pdf_status:
-                    masks = []
-                    captions = []
-                    lineart_p = LineArtParams(
-                        target_line_mm=target_line_mm,
-                        strip_border=strip_border,
-                    )
-                    book_p = BookParams(
-                        title=book_title,
-                        author=book_author,
-                        per_page=per_page,
-                        show_frame=show_frame,
-                        show_caption=show_caption,
-                        show_page_number=show_page_number,
-                        include_cover=include_cover,
-                    )
-
+            if btn_convert:
+                lineart_p = LineArtParams(
+                    target_line_mm=target_line_mm,
+                    strip_border=strip_border,
+                )
+                with st.status("กำลังแปลงรูปเป็นภาพลายเส้น...", expanded=True) as conv_status:
                     progress_conv = st.progress(0)
-                    for i, itm in enumerate(items_to_convert, 1):
-                        progress_conv.progress(i / len(items_to_convert))
-                        st.write(f":material/draw: กำลังแปลงภาพ: {itm['name']}...")
+                    done = 0
+                    for i, (name, raw) in enumerate(sources, 1):
+                        progress_conv.progress(i / len(sources))
+                        st.write(f":material/draw: กำลังแปลงภาพ: {name}...")
                         try:
-                            # ถอดรหัสภาพเป็น BGR
-                            bgr_img = imgio.imdecode(itm["bytes"])
-                            # แปลงเป็นลายเส้น XDoG
-                            res = convert.convert(bgr_img, lineart_p)
-                            if not res.is_empty:
-                                masks.append(res.mask)
-                                cap = imgio.caption_from_filename(itm["name"])
-                                captions.append(cap)
+                            res = convert.convert(imgio.imdecode(raw), lineart_p)
                         except Exception as e:
-                            st.warning(f"ข้ามภาพ {itm['name']}: {e}")
-
-                    st.write(f":material/menu_book: กำลังรวบรวมเข้าเล่ม A4 PDF ({len(masks)} หน้า)...")
-                    try:
-                        page_images, _page_warnings = book_pdf.build_pages(
-                            masks, captions, book_p, lineart_p
+                            st.warning(f"ข้ามภาพ {name}: {e}")
+                            continue
+                        if res.is_empty:
+                            st.warning(f"ข้ามภาพ {name}: ไม่พบเส้นในภาพ")
+                            continue
+                        existing = next(
+                            (c for c in st.session_state.converted if c["name"] == name),
+                            None,
                         )
-                        st.session_state.page_pngs = [
-                            page_to_png(im) for im in page_images
-                        ]
-                        pdf_status.update(
-                            label=f"สร้างสมุดระบายสีสำเร็จ! ทั้งหมด {len(page_images)} หน้า",
-                            state="complete",
-                        )
-                    except Exception as e:
-                        pdf_status.update(
-                            label=f"เกิดข้อผิดพลาดในการสร้าง PDF: {e}",
-                            state="error",
-                        )
-
-            # แสดงผลลัพธ์การสร้าง PDF
-            if st.session_state.page_pngs:
-                st.space("small")
-                pages_png = st.session_state.page_pngs
-                with st.container(border=True):
-                    st.success(
-                        ":material/check_circle: สมุดระบายสี A4 พร้อมพิมพ์แล้ว! ตรวจดูทุกหน้าด้านล่าง แล้วกดปุ่มพิมพ์ได้เลย",
-                        icon=":material/verified:",
+                        if existing:
+                            existing["mask"] = res.mask
+                            existing["thumb"] = mask_thumb(res.mask)
+                        else:
+                            st.session_state.uid_counter += 1
+                            st.session_state.converted.append(
+                                {
+                                    "uid": st.session_state.uid_counter,
+                                    "name": name,
+                                    "caption": imgio.caption_from_filename(name),
+                                    "mask": res.mask,
+                                    "thumb": mask_thumb(res.mask),
+                                }
+                            )
+                        done += 1
+                    conv_status.update(
+                        label=f"แปลงสำเร็จ {done} จาก {len(sources)} รูป — ไปต่อที่ 'ขั้นที่ 3' ได้เลย",
+                        state="complete",
                     )
-                    c_meta, c_dl = st.columns([2, 1], vertical_alignment="center")
-                    with c_meta:
-                        st.write(f"📄 สมุดระบายสี A4 ทั้งหมด **{len(pages_png)} หน้า**")
-                    with c_dl:
-                        render_print_button()
 
-                    st.write("ตัวอย่างทุกหน้า:")
-                    with st.container(key="print_pages"):
-                        per_row = 3
-                        for start in range(0, len(pages_png), per_row):
-                            row = st.columns(per_row)
-                            for offset, col in enumerate(row):
-                                idx = start + offset
-                                if idx >= len(pages_png):
-                                    break
-                                with col:
-                                    st.image(
-                                        pages_png[idx],
-                                        caption=f"หน้า {idx + 1}",
-                                        width="stretch",
-                                    )
+        converted = st.session_state.converted
+        if converted:
+            st.space("small")
+            h1, h2 = st.columns([4, 1], vertical_alignment="center")
+            h1.write(f"รูปลายเส้นที่แปลงแล้ว **{len(converted)} รูป**")
+            if h2.button("ล้างทั้งหมด", icon=":material/delete_sweep:", width="stretch"):
+                st.session_state.converted = []
+                st.session_state.page_pngs = None
+                st.rerun()
+
+            per_row = 4
+            for start in range(0, len(converted), per_row):
+                cols = st.columns(per_row)
+                for offset, col in enumerate(cols):
+                    idx = start + offset
+                    if idx >= len(converted):
+                        break
+                    item = converted[idx]
+                    with col:
+                        with st.container(border=True):
+                            st.image(item["thumb"], caption=item["name"], width="stretch")
+                            if st.button(
+                                "ลบ",
+                                key=f"del_{item['uid']}",
+                                icon=":material/delete:",
+                                width="stretch",
+                            ):
+                                st.session_state.converted = [
+                                    c for c in converted if c["uid"] != item["uid"]
+                                ]
+                                st.rerun()
+
+
+# ----------------- Tab 3: Build book & print -----------------
+with tab_book:
+    st.subheader(":material/menu_book: ขั้นที่ 3: รวมเล่ม & พิมพ์")
+
+    converted = st.session_state.converted
+    if not HAS_COLORING_ENGINE:
+        st.error("ไม่พบโมดูลสร้างสมุดระบายสี (app.lineart / app.book)")
+    elif not converted:
+        st.info(
+            "ยังไม่มีรูปลายเส้น ไปแปลงรูปที่ 'ขั้นที่ 2' ก่อนครับ",
+            icon=":material/info:",
+        )
+    else:
+        st.write("เลือกรูปที่จะใส่ในเล่ม จัดลำดับ และแก้ชื่อกำกับได้ที่นี่")
+        for pos, item in enumerate(converted):
+            uid = item["uid"]
+            with st.container(border=True):
+                c_use, c_img, c_cap, c_up, c_down = st.columns(
+                    [1, 2, 6, 1, 1], vertical_alignment="center"
+                )
+                c_use.checkbox("ใส่", value=True, key=f"use_{uid}")
+                c_img.image(item["thumb"], width=90)
+                c_cap.text_input(
+                    "ชื่อกำกับ",
+                    value=item["caption"],
+                    key=f"cap_{uid}",
+                    label_visibility="collapsed",
+                )
+                if c_up.button("", key=f"up_{uid}", icon=":material/arrow_upward:", disabled=pos == 0):
+                    converted[pos - 1], converted[pos] = converted[pos], converted[pos - 1]
+                    st.rerun()
+                if c_down.button(
+                    "", key=f"down_{uid}", icon=":material/arrow_downward:",
+                    disabled=pos == len(converted) - 1,
+                ):
+                    converted[pos + 1], converted[pos] = converted[pos], converted[pos + 1]
+                    st.rerun()
+
+        chosen = [c for c in converted if st.session_state.get(f"use_{c['uid']}", True)]
+
+        with st.container(border=True):
+            c_info, c_action = st.columns([3, 1], vertical_alignment="center")
+            with c_info:
+                st.write(f"จะรวมเป็นสมุด **{len(chosen)} รูป**")
+                st.caption(
+                    f"ชื่อสมุด: **{book_title}** | จัดหน้า: **{per_page} รูป/หน้า** | "
+                    f"หน้าปก: **{'มี' if include_cover else 'ไม่มี'}**"
+                )
+            with c_action:
+                btn_build = st.button(
+                    "รวมเล่ม (เตรียมพิมพ์)",
+                    type="primary",
+                    icon=":material/menu_book:",
+                    width="stretch",
+                    disabled=not chosen,
+                )
+
+        if btn_build:
+            with st.status("กำลังจัดหน้าสมุด A4...", expanded=True) as build_status:
+                book_p = BookParams(
+                    title=book_title,
+                    author=book_author,
+                    per_page=per_page,
+                    show_frame=show_frame,
+                    show_caption=show_caption,
+                    show_page_number=show_page_number,
+                    include_cover=include_cover,
+                )
+                lineart_p = LineArtParams(
+                    target_line_mm=target_line_mm,
+                    strip_border=strip_border,
+                )
+                masks = [c["mask"] for c in chosen]
+                captions = [
+                    (st.session_state.get(f"cap_{c['uid']}") or c["caption"]).strip()
+                    or c["caption"]
+                    for c in chosen
+                ]
+                try:
+                    page_images, page_warnings = book_pdf.build_pages(
+                        masks, captions, book_p, lineart_p
+                    )
+                    st.session_state.page_pngs = [page_to_png(im) for im in page_images]
+                    for w in page_warnings:
+                        st.warning(w)
+                    build_status.update(
+                        label=f"รวมเล่มสำเร็จ! ทั้งหมด {len(page_images)} หน้า",
+                        state="complete",
+                    )
+                except Exception as e:
+                    build_status.update(label=f"เกิดข้อผิดพลาดในการรวมเล่ม: {e}", state="error")
+
+        if st.session_state.page_pngs:
+            st.space("small")
+            pages_png = st.session_state.page_pngs
+            with st.container(border=True):
+                st.success(
+                    ":material/check_circle: สมุดระบายสี A4 พร้อมพิมพ์แล้ว! ตรวจดูทุกหน้าด้านล่าง แล้วกดปุ่มพิมพ์ได้เลย",
+                    icon=":material/verified:",
+                )
+                c_meta, c_dl = st.columns([2, 1], vertical_alignment="center")
+                with c_meta:
+                    st.write(f"📄 สมุดระบายสี A4 ทั้งหมด **{len(pages_png)} หน้า**")
+                with c_dl:
+                    render_print_button()
+
+                st.write("ตัวอย่างทุกหน้า:")
+                with st.container(key="print_pages"):
+                    per_row = 3
+                    for start in range(0, len(pages_png), per_row):
+                        row = st.columns(per_row)
+                        for offset, col in enumerate(row):
+                            idx = start + offset
+                            if idx >= len(pages_png):
+                                break
+                            with col:
+                                st.image(
+                                    pages_png[idx],
+                                    caption=f"หน้า {idx + 1}",
+                                    width="stretch",
+                                )
