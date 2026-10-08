@@ -25,6 +25,46 @@ class AiError(RuntimeError):
     """เรียก AI ไม่สำเร็จ"""
 
 
+def describe_connection_error(url: str, exc: Exception) -> str:
+    """แปลง error การเชื่อมต่อให้เป็นข้อความที่ชี้สาเหตุได้
+
+    ข้อความจากระบบอย่าง "[Errno -5] No address associated with hostname"
+    ผู้ใช้ทั่วไปอ่านแล้วไม่รู้ว่าต้องแก้อะไร จึงต้องบอกทั้งชื่อเครื่องที่หาไม่เจอ
+    และสิ่งที่ควรตรวจ สองสาเหตุที่พบบ่อยคือเครื่องนี้ต่ออินเทอร์เน็ตไม่ได้
+    หรือตัวแปร AI_BASE_URL ตั้งชื่อโดเมนผิด
+    """
+    from urllib.parse import urlparse
+
+    host = urlparse(url).netloc or "ที่ตั้งค่าไว้"
+    reason = str(getattr(exc, "reason", exc))
+    lowered = reason.lower()
+
+    dns_markers = (
+        "no address associated with hostname",
+        "name or service not known",
+        "getaddrinfo",
+        "nodename nor servname provided",
+        "temporary failure in name resolution",
+    )
+    if any(marker in lowered for marker in dns_markers):
+        return (
+            f"ติดต่อเซิร์ฟเวอร์ AI ไม่สำเร็จ: หาที่อยู่ของ {host} ไม่พบ "
+            "— ตรวจว่าเครื่องนี้ต่ออินเทอร์เน็ตได้ "
+            f"และค่า AI_BASE_URL ถูกต้อง (ขณะนี้ชี้ที่ {host})"
+        )
+    if "timed out" in lowered or "timeout" in lowered:
+        return (
+            f"เซิร์ฟเวอร์ AI ที่ {host} ตอบช้าเกินเวลาที่กำหนด "
+            "ลองเพิ่ม AI_TIMEOUT_SECONDS หรือลองใหม่อีกครั้ง"
+        )
+    if "connection refused" in lowered:
+        return (
+            f"เซิร์ฟเวอร์ที่ {host} ปฏิเสธการเชื่อมต่อ "
+            "— ตรวจค่า AI_BASE_URL ว่าชี้ที่บริการที่เปิดอยู่จริง"
+        )
+    return f"ติดต่อเซิร์ฟเวอร์ AI ไม่สำเร็จ ({host}): {reason}"
+
+
 def _encode_png(image: np.ndarray) -> tuple[str, str]:
     """เข้ารหัสภาพเป็น base64 พร้อมชนิดไฟล์ ส่งเข้า API
 
@@ -117,7 +157,7 @@ def convert_to_lineart(
         detail = _read_http_error(exc)
         raise AiError(f"AI ตอบกลับข้อผิดพลาด {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
-        raise AiError("ติดต่อเซิร์ฟเวอร์ AI ไม่สำเร็จ: " + str(exc.reason)) from exc
+        raise AiError(describe_connection_error(url, exc)) from exc
     except TimeoutError as exc:
         raise AiError("AI ตอบนานเกินกำหนดเวลา") from exc
 

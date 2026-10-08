@@ -398,18 +398,8 @@ kbd {
   margin: 8px 0;
 }
 
-/* ---------- สไลเดอร์ ---------- */
+/* ---------- กลุ่มตัวเลือกคุณภาพเส้น ---------- */
 .slider-group { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
-.slider output { font-weight: 500; color: var(--brand-dark); font-size: 13px; }
-input[type="range"] {
-  width: 100%;
-  accent-color: var(--brand);
-  margin: 4px 0;
-}
-.scale {
-  display: flex; justify-content: space-between;
-  font-size: 11px; color: var(--ink-soft);
-}
 
 /* ---------- สถานะและการกระทำ ---------- */
 .status { min-height: 20px; font-size: 13.5px; color: var(--ink-soft); margin: 8px 0 0; }

@@ -231,6 +231,50 @@ def test_generate_endpoint_rejects_bad_count(client: TestClient, monkeypatch) ->
     assert response.status_code == 422
 
 
+def test_dns_failure_message_points_to_cause(monkeypatch) -> None:
+    """error แบบ [Errno -5] ต้องแปลงเป็นข้อความที่บอกสาเหตุและวิธีแก้"""
+    import urllib.error
+
+    from app.ai.gemini import describe_connection_error
+
+    def reason(msg):
+        return urllib.error.URLError(RuntimeError(msg))
+
+    dns = describe_connection_error(
+        "https://ai.example.com/v1/models/m:generateContent",
+        reason("[Errno -5] No address associated with hostname"),
+    )
+    assert "ai.example.com" in dns
+    assert "AI_BASE_URL" in dns
+    assert "อินเทอร์เน็ต" in dns
+
+    timeout = describe_connection_error(
+        "https://ai.example.com/v1", reason("timed out")
+    )
+    assert "AI_TIMEOUT_SECONDS" in timeout
+
+    other = describe_connection_error(
+        "https://ai.example.com/v1", reason("weird failure")
+    )
+    assert "ai.example.com" in other and "weird failure" in other
+
+
+def test_generate_endpoint_surfaces_dns_note(client: TestClient, monkeypatch) -> None:
+    """ล้มเพราะ DNS ต้องเห็นชื่อโดเมนที่หาไม่เจอในข้อความตอบกลับ"""
+    import urllib.error
+
+    def fake_urlopen(*_args, **_kwargs):
+        raise urllib.error.URLError(RuntimeError("[Errno -5] No address associated with hostname"))
+
+    monkeypatch.setattr("app.main._ai_settings", lambda: load_settings({ENV_API_KEY: "k"}))
+    monkeypatch.setattr(generate.urllib.request, "urlopen", fake_urlopen)
+    response = client.post("/api/generate", json={"prompt": "แมว"})
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "No address" not in detail or "AI_BASE_URL" in detail
+    assert "generativelanguage" in detail or "AI_BASE_URL" in detail
+
+
 def test_health_lists_styles(client: TestClient) -> None:
     data = client.get("/api/health").json()
     styles = data["ai"]["styles"]

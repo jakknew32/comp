@@ -19,6 +19,7 @@ import urllib.request
 import cv2
 import numpy as np
 
+from .gemini import describe_connection_error
 from .settings import AiSettings
 
 HF_API_BASE = "https://api-inference.huggingface.co/models"
@@ -158,7 +159,7 @@ def hf_convert_to_lineart(
     except urllib.error.HTTPError as exc:
         raise HfError(f"HF API ตอบกลับข้อผิดพลาด {exc.code}: {_read_http_error(exc)}") from exc
     except urllib.error.URLError as exc:
-        raise HfError(f"ติดต่อ HF API ไม่สำเร็จ: {exc.reason}") from exc
+        raise HfError(describe_connection_error(url, exc)) from exc
     except TimeoutError as exc:
         raise HfError("HF API ตอบช้าเกินกำหนด") from exc
 

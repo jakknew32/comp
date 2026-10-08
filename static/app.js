@@ -40,8 +40,8 @@ const dom = {
   items: el("items"), count: el("count"), empty: el("empty"), clear: el("clear"),
   // ตั้งค่า
   title: el("title"), author: el("author"), perPage: el("perPage"),
-  line: el("line"), lineOut: el("lineOut"), speckle: el("speckle"),
-  speckleOut: el("speckleOut"), frame: el("frame"), cover: el("cover"),
+  line: el("line"), speckle: el("speckle"),
+  frame: el("frame"), cover: el("cover"),
   caption: el("caption"), pagenum: el("pagenum"),
   previewBtn: el("previewBtn"), makeBtn: el("makeBtn"),
   downloadReady: el("downloadReady"), downloadTitle: el("downloadTitle"),
@@ -602,11 +602,7 @@ function bookPayload() {
   };
 }
 function syncLabels() {
-  const line = parseFloat(dom.line.value);
-  dom.lineOut.textContent = line === 0 ? "พอดีอัตโนมัติ (1.0 มม.)" : line.toFixed(1) + " มม.";
-  const speckleIndex = parseInt(dom.speckle.value, 10);
-  dom.speckleOut.textContent =
-    speckleIndex === 0 ? "อัตโนมัติ" : "ระดับ " + speckleIndex;
+  /* ค่าทั้งสองเป็น dropdown แล้ว ป้ายบอกค่าอยู่ในตัวเลือกเอง ไม่ต้องซิงก์แยก */
 }
 async function readError(response) {
   try {
@@ -763,8 +759,6 @@ function init() {
     if (!state.latestPdfUrl) return;
     window.open(state.latestPdfUrl, "_blank", "noopener");
   });
-  dom.line.addEventListener("input", syncLabels);
-  dom.speckle.addEventListener("input", syncLabels);
   // ดึงภาพจากเว็บ
   dom.fetchBtn.addEventListener("click", fetchWebImages);
   dom.webAddBtn.addEventListener("click", addSelectedWebImages);

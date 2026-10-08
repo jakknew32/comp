@@ -68,18 +68,22 @@ SKIP_URL_PATTERNS = (
     "gravatar",
 )
 
-# Pinterest ซ่อนรูปไว้ใน JSON ก้อนใหญ่ในโค้ดหน้าเว็บ ไม่ได้อยู่ในแท็ก img ปกติ
-# จึงต้องสแกน HTML ดิบด้วย regex เพิ่มจากการแยกแท็กเดิม
+# Pinterest ซ่อนรูปไว้ใน JSON ก้อนใหญ่และแอตทริบิวต์ imageSrcSet ของ React
+# ไม่ได้อยู่ในแท็ก img ปกติเสมอไป จึงต้องสแกน HTML ดิบด้วย regex เพิ่มจากการแยกแท็กเดิม
+# path หลังขนาดลึกได้ตามแฮชของแต่ละรูป เช่น /736x/f7/a9/0a/ชื่อ.jpg ลึก 4 ระดับ
 PINIMG_PATTERN = re.compile(
-    r"https://i\.pinimg\.com/(?:originals|\d+x)/[A-Za-z0-9_%\-.]+/"
-    r"[A-Za-z0-9_%\-.]+\.(?:jpg|jpeg|png|webp)",
+    r"https://i\.pinimg\.com/(?:originals|\d+x)/[^\s\"'<>\\)]+?\.(?:jpg|jpeg|png|webp)",
     re.IGNORECASE,
 )
 
 # ขนาดย่อที่ Pinterest ใช้ ต้องย้ายไปขนาดใหญ่กว่าเสมอ
 # 736x เป็นขนาดที่มีแทบทุกรูป (originals บางรูปไม่มีและจะ 403)
 PINIMG_TARGET_SIZE = "736x"
-PINIMG_SMALL_SIZES = ("170x", "236x", "474x")
+
+# หน้าค้นหาของ Pinterest โหลด pin ด้วย JavaScript เมื่อเปิดด้วยเบราว์เซอร์ทั่วไป
+# HTML ที่เซิร์ฟเวอร์ส่งให้จึงแทบไม่มีรูป แต่ถ้าแอบอ้างว่าเป็นแอปของ Pinterest เอง
+# เซิร์ฟเวอร์จะส่งหน้าแบบ render เสร็จที่มีรูปฝังอยู่ทุก pin กลับมา
+PINTEREST_UA = "Pinterest/Android"
 
 # แมพ format ของ PIL เป็น MIME type และ extension
 FORMAT_TO_MIME_AND_EXT = {
@@ -114,9 +118,9 @@ def detect_image_format(data: bytes) -> tuple[str, str]:
 
 def upgrade_pinimg(url: str) -> str:
     """ย้ายรูปของ Pinterest ไปยังขนาดใหญ่ที่สุดที่มีให้ดาวน์โหลด"""
-    result = re.sub(r"/(?:\d+x)/", f"/{PINIMG_TARGET_SIZE}/", url)
-    # รูปที่เป็น png/webp ที่ originals อาจไม่มี คงอยู่ที่ 736x ก็เพียงพอ
-    return result
+    if "/originals/" in url:
+        return url
+    return re.sub(r"/(?:\d+x)/", f"/{PINIMG_TARGET_SIZE}/", url)
 
 
 def extract_pinimg_urls(html: str) -> list[str]:
@@ -239,6 +243,9 @@ def extract_image_urls(html: str, page_url: str) -> list[str]:
             absolute = urljoin(page_url, candidate)
         except ValueError:
             return
+        # รูปของ Pinterest ถูกอ้างหลายขนาดในหน้าเดียว ยกเป็นขนาดใหญ่ตั้งแต่ตรงนี้
+        if "i.pinimg.com" in absolute:
+            absolute = upgrade_pinimg(absolute)
         if not absolute.startswith(("http://", "https://")):
             return
         if absolute in seen:
@@ -298,10 +305,36 @@ def extract_image_urls(html: str, page_url: str) -> list[str]:
     for pin_url in extract_pinimg_urls(html):
         add(pin_url)
 
-    return found[:MAX_RESULTS]
+    return _dedupe_pins(found)[:MAX_RESULTS]
 
 
-def fetch_page(url: str) -> str:
+def _dedupe_pins(found: list[str]) -> list[str]:
+    """รวมรูป Pinterest ที่เป็น pin เดียวกันให้เหลือขนาดดีที่สุดหนึ่งลิงก์
+
+    หน้าเดียวอ้างรูปเดียวกันทั้ง 236x 474x 736x และ originals
+    ยกขนาดให้ 736x หมดแล้วจึงเหลือแค่คู่ 736x กับ originals ที่ชื่อไฟล์เดียวกัน
+    เก็บ originals ไว้เสมอเพราะเป็นไฟล์ต้นฉบับคุณภาพสูงสุด
+    (ชื่อ hash เดียวกันอาจต่างนามสกุล jpg กับ png จึงต้องตัดนามสกุลออกก่อนเทียบ)
+    """
+    best: dict[str, str] = {}
+    final: list[str] = []
+    for url in found:
+        if "i.pinimg.com" not in url:
+            final.append(url)
+            continue
+        basename = os.path.basename(urlparse(url).path)
+        key = os.path.splitext(basename)[0]
+        prior = best.get(key)
+        if prior is None:
+            best[key] = url
+            final.append(url)
+        elif "/originals/" in url and "/originals/" not in prior:
+            final[final.index(prior)] = url
+            best[key] = url
+    return final
+
+
+def fetch_page(url: str, user_agent: str = USER_AGENT) -> str:
     """โหลด HTML ของหน้าเว็บ
 
     ต้องจำกัดขนาดไว้ เพราะบางเว็บส่งหน้าเว็บกลับมาหลายสิบเมกะไบต์
@@ -310,7 +343,7 @@ def fetch_page(url: str) -> str:
     try:
         response = requests.get(
             url,
-            headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"},
+            headers={"User-Agent": user_agent, "Accept": "text/html,application/xhtml+xml"},
             timeout=PAGE_FETCH_TIMEOUT,
             stream=True,
         )
@@ -354,8 +387,14 @@ def list_images(url: str) -> list[dict]:
     if urlparse(validated).path.lower().endswith(IMAGE_EXTENSIONS):
         return [{"url": validated, "name": _clean_name(validated, 0)}]
 
-    html = fetch_page(validated)
+    # Pinterest ส่งหน้าแบบ render เสร็จพร้อมรูปให้เฉพาะแอปของตัวเอง
+    # จึงต้องขอด้วย UA แบบแอป ถ้ายังไม่เจอรูปค่อยลองด้วย UA เบราว์เซอร์ทั่วไป
+    is_pinterest = host.lower().endswith("pinterest.com")
+    html = fetch_page(validated, user_agent=PINTEREST_UA if is_pinterest else USER_AGENT)
     urls = extract_image_urls(html, validated)
+    if not urls and is_pinterest:
+        html = fetch_page(validated)
+        urls = extract_image_urls(html, validated)
 
     if not urls:
         raise WebImageError(

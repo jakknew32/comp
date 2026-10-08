@@ -17,7 +17,13 @@ import urllib.request
 import cv2
 import numpy as np
 
-from .gemini import AiError, _decode_image, _extract_image, _read_http_error
+from .gemini import (
+    AiError,
+    _decode_image,
+    _extract_image,
+    _read_http_error,
+    describe_connection_error,
+)
 from .settings import AiProvider, AiSettings
 
 # สไตล์สำเร็จรูป แต่ละสไตล์คือคำสั่งเสริมที่แปะต่อท้ายคำบรรยายของผู้ใช้
@@ -122,7 +128,7 @@ def generate_with_gemini(
     except urllib.error.HTTPError as exc:
         raise AiError(f"AI ตอบกลับข้อผิดพลาด {exc.code}: {_read_http_error(exc)}") from exc
     except urllib.error.URLError as exc:
-        raise AiError("ติดต่อเซิร์ฟเวอร์ AI ไม่สำเร็จ: " + str(exc.reason)) from exc
+        raise AiError(describe_connection_error(url, exc)) from exc
     except TimeoutError as exc:
         raise AiError("AI ตอบนานเกินกำหนดเวลา") from exc
 
@@ -171,7 +177,7 @@ def generate_with_huggingface(
     except urllib.error.HTTPError as exc:
         raise AiError(f"AI ตอบกลับข้อผิดพลาด {exc.code}: {_read_http_error(exc)}") from exc
     except urllib.error.URLError as exc:
-        raise AiError("ติดต่อเซิร์ฟเวอร์ AI ไม่สำเร็จ: " + str(exc.reason)) from exc
+        raise AiError(describe_connection_error(url, exc)) from exc
     except TimeoutError as exc:
         raise AiError("AI ตอบนานเกินกำหนดเวลา") from exc
 
