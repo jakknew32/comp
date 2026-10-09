@@ -12,12 +12,16 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
+import socket
 from urllib.parse import unquote, urljoin, urlparse
 
 import requests
+import urllib3
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
 
 from .config import MAX_UPLOAD_BYTES
 from .lineart import imgio
@@ -139,6 +143,99 @@ class WebImageError(ValueError):
     """เกิดข้อผิดพลาดตอนดึงรูปจากเว็บไซต์"""
 
 
+
+# ---------------------------------------------------------------------------
+# กันไม่ให้เซิร์ฟเวอร์ถูกใช้ยิงเข้าเครือข่ายภายใน (SSRF)
+#
+# การเดาจากหน้าตาชื่อโฮสต์อย่างเดียวกันไม่ได้ เพราะ localhost:พอร์ต, เลขฐานสิบ,
+# โดเมนที่ชี้ไป 127.0.0.1 หรือการ redirect ผ่านได้หมด จึงตรวจ "ที่อยู่ IP จริง"
+# 2 ชั้น: (1) ก่อนส่งคำขอ เพื่อตอบข้อความที่เข้าใจง่าย
+#          (2) ตอนต่อ socket จริง ซึ่งครอบคลุมทุกครั้งที่ redirect และกัน DNS rebinding
+# ---------------------------------------------------------------------------
+
+MAX_REDIRECTS = 5
+PRIVATE_NETWORK_MESSAGE = "ไม่สามารถดึงรูปจากเครือข่ายภายในได้"
+
+
+def _ip_is_public(address: str) -> bool:
+    """True เฉพาะที่อยู่ที่เป็นอินเทอร์เน็ตสาธารณะจริง"""
+    try:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return False
+    # IPv6 ที่ห่อ IPv4 ไว้ เช่น ::ffff:127.0.0.1 ต้องตรวจที่ IPv4 ข้างใน
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
+def _assert_public_host(hostname: str | None) -> None:
+    """แปลงชื่อโฮสต์เป็น IP แล้วต้องเป็นสาธารณะทุกที่อยู่ ไม่งั้นปฏิเสธ"""
+    if not hostname:
+        raise WebImageError("ลิงก์ไม่มีชื่อเว็บไซต์")
+    try:
+        infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError) as exc:
+        raise WebImageError("ไม่พบเว็บไซต์นี้ กรุณาตรวจสอบลิงก์") from exc
+    if not infos or not all(_ip_is_public(str(info[4][0])) for info in infos):
+        raise WebImageError(PRIVATE_NETWORK_MESSAGE)
+
+
+class _PublicOnlyConnection:
+    """ผสมเข้ากับคลาส connection ของ urllib3: ตรวจ IP ปลายทางหลังต่อ socket สำเร็จ"""
+
+    def _new_conn(self):  # type: ignore[no-untyped-def]
+        sock = super()._new_conn()  # type: ignore[misc]
+        try:
+            peer = str(sock.getpeername()[0])
+        except OSError:
+            sock.close()
+            raise
+        if not _ip_is_public(peer):
+            sock.close()
+            raise WebImageError(PRIVATE_NETWORK_MESSAGE)
+        return sock
+
+
+class _SafeHTTPConnection(_PublicOnlyConnection, urllib3.connection.HTTPConnection):
+    pass
+
+
+class _SafeHTTPSConnection(_PublicOnlyConnection, urllib3.connection.HTTPSConnection):
+    pass
+
+
+class _SafeHTTPPool(urllib3.HTTPConnectionPool):
+    ConnectionCls = _SafeHTTPConnection
+
+
+class _SafeHTTPSPool(urllib3.HTTPSConnectionPool):
+    ConnectionCls = _SafeHTTPSConnection
+
+
+class _PublicOnlyAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().init_poolmanager(*args, **kwargs)
+        self.poolmanager.pool_classes_by_scheme = {
+            "http": _SafeHTTPPool,
+            "https": _SafeHTTPSPool,
+        }
+
+
+def _make_session() -> requests.Session:
+    session = requests.Session()
+    # ไม่ใช้ proxy จากตัวแปรแวดล้อม เพราะ IP ปลายทางจะกลายเป็นของ proxy แทนเว็บจริง
+    session.trust_env = False
+    session.max_redirects = MAX_REDIRECTS
+    adapter = _PublicOnlyAdapter()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+_SESSION = _make_session()
+
+
 def validate_url(url: str) -> str:
     """ตรวจว่า URL ที่ผู้ใช้ใส่มาใช้ดึงรูปได้จริง
 
@@ -169,8 +266,8 @@ def _is_probably_private(host: str) -> bool:
     การตรวจ DNS จริงแม่นกว่ามาก แต่ต้องเสียเวลารอ จึงใช้การเดาจากรูปแบบชื่อ
     ซึ่งกันกรณีพื้นฐานได้ ความปลอดภัยจริงยังต้องมาจากการตรวจหลัง resolve
     """
-    host = host.lower().strip("[]")
-    if host in ("localhost", "localhost.localdomain"):
+    host = host.lower().strip("[]").rstrip(".")
+    if host in ("localhost", "localhost.localdomain", "::1"):
         return True
     if host.startswith(("127.", "0.", "10.", "192.168.", "169.254.")):
         return True
@@ -256,7 +353,7 @@ def extract_image_urls(html: str, page_url: str) -> list[str]:
             return
         if not _looks_like_image(absolute):
             return
-        host = urlparse(absolute).netloc
+        host = urlparse(absolute).hostname or ""
         if _is_probably_private(host):
             return
 
@@ -341,7 +438,7 @@ def fetch_page(url: str, user_agent: str = USER_AGENT) -> str:
     ซึ่งกินหน่วยความจำของ Render จนบริการอื่นใช้ไม่ได้
     """
     try:
-        response = requests.get(
+        response = _SESSION.get(
             url,
             headers={"User-Agent": user_agent, "Accept": "text/html,application/xhtml+xml"},
             timeout=PAGE_FETCH_TIMEOUT,
@@ -379,9 +476,8 @@ def list_images(url: str) -> list[dict]:
     การโหลดมาทั้งหมดจะทำให้เซิร์ฟเวอร์ทำงานช้าหรือค้าง
     """
     validated = validate_url(url)
-    host = urlparse(validated).netloc
-    if _is_probably_private(host):
-        raise WebImageError("ไม่สามารถดึงรูปจากเครือข่ายภายในได้")
+    host = urlparse(validated).hostname or ""
+    _assert_public_host(host)
 
     # ลิงก์ที่ชี้ไปยังไฟล์รูปตรง ๆ ใช้ได้ทันที ไม่ต้องโหลดหน้าเว็บ
     if urlparse(validated).path.lower().endswith(IMAGE_EXTENSIONS):
@@ -415,12 +511,10 @@ def download_image(url: str) -> tuple[bytes, str]:
     เพราะเบราว์เซอร์ถูกกฎ CORS ของเว็บเป้าหมายกันไว้ จะอ่านข้ามโดเมนไม่ได้
     """
     validated = validate_url(url)
-    host = urlparse(validated).netloc
-    if _is_probably_private(host):
-        raise WebImageError("ไม่สามารถดึงรูปจากเครือข่ายภายในได้")
+    _assert_public_host(urlparse(validated).hostname)
 
     try:
-        response = requests.get(
+        response = _SESSION.get(
             validated,
             headers={"User-Agent": USER_AGENT, "Accept": "image/*,*/*"},
             timeout=IMAGE_FETCH_TIMEOUT,

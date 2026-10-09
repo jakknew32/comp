@@ -46,6 +46,10 @@ MIN_LONG_EDGE_PX = 1400
 SUPPORTED_FORMATS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
+# จำนวนรูปสูงสุดต่อหนึ่งคำขอรวมเล่ม ถ้าไม่จำกัด คำขอเดียวส่งไฟล์หลายร้อยไฟล์
+# ก็ทำให้หน่วยความจำของเซิร์ฟเวอร์เต็มและบริการล่มได้
+MAX_FILES_PER_REQUEST = 60
+
 GRID_OPTIONS: dict[int, tuple[int, int]] = {
     1: (1, 1),
     2: (1, 2),

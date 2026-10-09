@@ -27,6 +27,7 @@ from .ai import generate as generate_module
 from .book import pdf as book_pdf
 from .config import (
     GRID_OPTIONS,
+    MAX_FILES_PER_REQUEST,
     MAX_UPLOAD_BYTES,
     STATIC_DIR,
     BookParams,
@@ -102,6 +103,18 @@ class GeneratePayload(BaseModel):
     count: int = Field(default=1, ge=1, le=4)
     provider: str | None = None
     model: str | None = None
+
+
+def _check_file_count(count: int) -> None:
+    """จำกัดจำนวนรูปต่อคำขอ กันคำขอเดียวกินหน่วยความจำจนเซิร์ฟเวอร์ล่ม"""
+    if count > MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"ส่งรูปมากเกินไป (สูงสุด {MAX_FILES_PER_REQUEST} รูปต่อเล่ม) "
+                "กรุณาแบ่งเป็นหลายเล่ม"
+            ),
+        )
 
 
 def to_lineart_params(payload: LineArtPayload | None) -> LineArtParams:
@@ -335,6 +348,7 @@ async def make_book(
     """ประกอบไฟล์ทั้งหมดเป็น PDF หนึ่งเล่ม"""
     if not files:
         raise HTTPException(status_code=400, detail="ยังไม่ได้เลือกภาพ")
+    _check_file_count(len(files))
 
     lp = to_lineart_params(parse_json(lineart, LineArtPayload))
     bp = to_book_params(parse_json(book, BookPayload))
@@ -355,7 +369,9 @@ async def make_book(
         raw = await read_upload(upload)
         name = upload.filename or f"ภาพที่ {index + 1}"
         try:
-            result, original_image, default_caption, warn = convert_uploaded(raw, name, lp)
+            result, original_image, default_caption, warn = await run_in_threadpool(
+                convert_uploaded, raw, name, lp
+            )
         except imgio.ImageLoadError as exc:
             skipped.append(f"{name}: {exc}")
             continue
@@ -379,7 +395,7 @@ async def make_book(
             detail += " — " + "; ".join(skipped)
         raise HTTPException(status_code=422, detail=detail)
 
-    result = book_pdf.build_book(masks, captions, bp, lp)
+    result = await run_in_threadpool(book_pdf.build_book, masks, captions, bp, lp)
     # ชื่อไฟล์ต้องเป็น ASCII ตามโครงสร้างไฟล์ ชื่อสมุดภาษาไทยจถูกตัดทิ้งทั้งหมด
     # จึงใส่วันที่ไว้แทน เพื่อไม่ให้ไฟล์ที่ดาวน์โหลดหลายครั้งชื่อซ้ำกัน
     fallback = "coloring-book-" + datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -460,6 +476,7 @@ async def make_pages(
     """ขั้นที่ 2: รวมภาพเป็นสมุด แล้วคืนภาพของ "ทุกหน้า" สำหรับพรีวิวและสั่งพิมพ์"""
     if not files:
         raise HTTPException(status_code=400, detail="ยังไม่ได้เลือกภาพ")
+    _check_file_count(len(files))
 
     lp = to_lineart_params(parse_json(lineart, LineArtPayload))
     bp = to_book_params(parse_json(book, BookPayload))
@@ -513,7 +530,7 @@ async def make_pages(
 class PagesByRefPayload(BaseModel):
     """รวมเล่มจากรูปที่แปลงไว้แล้วในขั้นแปลง ส่งแค่รหัสอ้างอิง ไม่ต้องอัปโหลดรูปซ้ำ"""
 
-    refs: list[str] = Field(min_length=1, max_length=200)
+    refs: list[str] = Field(min_length=1, max_length=MAX_FILES_PER_REQUEST)
     captions: list[str] = Field(default_factory=list)
     lineart: LineArtPayload | None = None
     book: BookPayload | None = None
@@ -587,7 +604,7 @@ async def web_images(url: Annotated[str, Form()]) -> JSONResponse:
     การโหลดมาทั้งหมดจะทำให้เซิร์ฟเวอร์ค้าง ผู้ใช้จึงต้องเลือกก่อนดาวน์โหลด
     """
     try:
-        images = list_images(url)
+        images = await run_in_threadpool(list_images, url)
     except WebImageError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -602,7 +619,7 @@ async def web_image(url: Annotated[str, Form()]) -> Response:
     อ่านไฟล์ข้ามโดเมนไม่ได้ ฝั่งหน้าเว็บจึงเอาไฟล์ที่ได้ไปเข้าสู่ขั้นตอนเดียวกับไฟล์ที่อัปโหลด
     """
     try:
-        raw, name = download_image(url)
+        raw, name = await run_in_threadpool(download_image, url)
     except WebImageError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -640,7 +657,9 @@ async def generate_images(payload: GeneratePayload) -> JSONResponse:
     images: list[dict] = []
     failed: list[str] = []
     for _ in range(payload.count):
-        outcome = ai.generate_image(
+        # เรียก AI อาจรอได้นานเป็นนาที ต้องรันนอก event loop ไม่งั้นเซิร์ฟเวอร์ทั้งตัวค้าง
+        outcome = await run_in_threadpool(
+            ai.generate_image,
             prompt,
             payload.style,
             settings,
