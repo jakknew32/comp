@@ -12,7 +12,8 @@ import json
 import logging
 from datetime import datetime
 from functools import lru_cache
-from typing import Annotated
+import random
+from typing import Annotated, Literal
 
 import numpy as np
 from PIL import Image
@@ -24,6 +25,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import ai
 from .ai import generate as generate_module
+from .book import activity as book_activity
 from .book import pdf as book_pdf
 from .config import (
     GRID_OPTIONS,
@@ -592,6 +594,111 @@ def _render_pages_response(
             "warnings": list(dict.fromkeys(warnings + page_warnings)),
             "skipped": skipped,
         },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# --- หนังสือกิจกรรม: เขียนตามรอยประ, ฝึกลากเส้น, จับคู่ ------------------------
+
+MAX_ACTIVITY_PAGES = 40
+MAX_TRACE_ITEMS = 60
+
+
+class ActivityImage(BaseModel):
+    """ภาพที่แปลงเป็นลายเส้นแล้ว (อ้างด้วยรหัสจากขั้นแปลง) พร้อมชื่อสำหรับจับคู่"""
+
+    ref: str = Field(min_length=1, max_length=64)
+    caption: str = Field(default="", max_length=60)
+
+
+class ActivityPayload(BaseModel):
+    title: str = Field(default="สมุดกิจกรรม", max_length=80)
+    show_name_line: bool = True
+    show_frame: bool = True
+    show_page_number: bool = True
+
+    prewriting: list[str] = Field(default_factory=list, max_length=len(book_activity.PREWRITING_PATTERNS))
+    trace_items: list[str] = Field(default_factory=list, max_length=MAX_TRACE_ITEMS)
+    trace_size_mm: float = Field(default=20.0, ge=10.0, le=40.0)
+    trace_blank_rows: int = Field(default=1, ge=0, le=3)
+    trace_guides: bool = True
+
+    match_mode: Literal["image_word", "image_shadow", "text_pairs"] = "image_word"
+    pairs_per_page: int = Field(default=4, ge=3, le=6)
+    answer_key: bool = False
+    images: list[ActivityImage] = Field(default_factory=list, max_length=MAX_FILES_PER_REQUEST)
+    text_pairs: list[list[str]] = Field(default_factory=list, max_length=MAX_TRACE_ITEMS)
+
+
+@app.post("/api/activity")
+def make_activity(payload: ActivityPayload) -> JSONResponse:
+    """สร้างหนังสือกิจกรรม แล้วคืนภาพ "ทุกหน้า" สำหรับพรีวิวและสั่งพิมพ์"""
+    unknown = [k for k in payload.prewriting if k not in book_activity.PREWRITING_PATTERNS]
+    if unknown:
+        raise HTTPException(status_code=422, detail="ไม่รู้จักรูปแบบลากเส้น: " + ", ".join(unknown))
+
+    trace_items = [t.strip()[:40] for t in payload.trace_items if t and t.strip()]
+
+    match_items: list[book_activity.MatchItem] = []
+    if payload.match_mode == "text_pairs":
+        for pair in payload.text_pairs:
+            if len(pair) != 2:
+                raise HTTPException(status_code=422, detail="คู่คำต้องมี 2 ข้อความ (ซ้าย, ขวา)")
+            left, right = pair[0].strip()[:40], pair[1].strip()[:40]
+            if left and right:
+                match_items.append(book_activity.MatchItem(caption=left, right_text=right))
+    else:
+        missing: list[int] = []
+        for index, image in enumerate(payload.images):
+            key = _REFS.get(image.ref)
+            result = _CACHE.get(key) if key else None
+            if result is None or result.is_empty:
+                missing.append(index)
+                continue
+            caption = image.caption.strip() or f"ภาพที่ {index + 1}"
+            match_items.append(book_activity.MatchItem(caption=caption, mask=result.mask))
+        if missing:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "ผลแปลงบางรูปหมดอายุแล้ว กรุณาแปลงรูปเหล่านั้นใหม่",
+                    "missing": missing,
+                },
+            )
+
+    if not payload.prewriting and not trace_items and len(match_items) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="ยังไม่มีกิจกรรมให้สร้าง: เลือกแบบฝึกลากเส้น พิมพ์ข้อความให้เขียนตามรอยประ หรือเพิ่มรูป/คำอย่างน้อย 2 รายการสำหรับจับคู่",
+        )
+
+    params = book_activity.ActivityParams(
+        title=payload.title.strip() or "สมุดกิจกรรม",
+        show_name_line=payload.show_name_line,
+        show_frame=payload.show_frame,
+        show_page_number=payload.show_page_number,
+        prewriting=payload.prewriting,
+        trace_items=trace_items,
+        trace_size_mm=payload.trace_size_mm,
+        trace_blank_rows=payload.trace_blank_rows,
+        trace_guides=payload.trace_guides,
+        match_mode=payload.match_mode,
+        pairs_per_page=payload.pairs_per_page,
+        answer_key=payload.answer_key,
+    )
+
+    warnings: list[str] = []
+    pages: list[str] = []
+    for page_image in book_activity.iter_activity_pages(
+        params, match_items, warnings, random.Random()
+    ):
+        if len(pages) >= MAX_ACTIVITY_PAGES:
+            warnings.append(f"หนังสือยาวเกิน จึงตัดเหลือ {MAX_ACTIVITY_PAGES} หน้าแรก")
+            break
+        pages.append(_data_url_png(page_image, PAGE_PREVIEW_WIDTH_PX))
+
+    return JSONResponse(
+        {"count": len(pages), "pages": pages, "warnings": list(dict.fromkeys(warnings))},
         headers={"Cache-Control": "no-store"},
     )
 

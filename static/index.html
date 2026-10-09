@@ -44,6 +44,9 @@
               <button type="button" id="tabUpload" class="tab" role="tab" aria-selected="false">
                 <span class="tab-icon">📁</span><span class="tab-text">อัปโหลด<span class="tab-sub">ไฟล์ / วางรูป</span></span>
               </button>
+              <button type="button" id="tabActivity" class="tab" role="tab" aria-selected="false">
+                <span class="tab-icon">📝</span><span class="tab-text">กิจกรรม<span class="tab-sub">ตามรอยประ · จับคู่</span></span>
+              </button>
             </div>
 
             <!-- TAB 1: สร้างภาพด้วย AI -->
@@ -108,6 +111,85 @@
               </div>
               <input type="file" id="picker" accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff" multiple hidden>
               <p id="uploadStatus" class="status" role="status" aria-live="polite"></p>
+            </div>
+
+            <!-- TAB 4: หนังสือกิจกรรม -->
+            <div id="panelActivity" class="tab-panel" hidden>
+              <div class="act-form">
+                <label class="field"><span class="field-label">ชื่อหนังสือกิจกรรม</span>
+                  <input type="text" id="actTitle" maxlength="80" value="สมุดกิจกรรม">
+                </label>
+                <div class="toggles">
+                  <label class="toggle"><input type="checkbox" id="actNameLine" checked><span class="toggle-slider"></span><span class="toggle-label">มีบรรทัด ชื่อ / วันที่</span></label>
+                  <label class="toggle"><input type="checkbox" id="actFrame" checked><span class="toggle-slider"></span><span class="toggle-label">ใส่กรอบมุมมน</span></label>
+                  <label class="toggle"><input type="checkbox" id="actPageNo" checked><span class="toggle-slider"></span><span class="toggle-label">มีเลขหน้า</span></label>
+                </div>
+
+                <fieldset class="act-section">
+                  <legend>1. ฝึกลากเส้น <span class="tab-sub">ก่อนหัดเขียน</span></legend>
+                  <div id="actPatterns" class="act-checks"></div>
+                  <button type="button" id="actPatternsAll" class="btn btn-ghost">✓ เลือกทั้งหมด</button>
+                </fieldset>
+
+                <fieldset class="act-section">
+                  <legend>2. เขียนตามรอยประ</legend>
+                  <label class="field"><span class="field-label">พิมพ์ตัวอักษร คำ หรือตัวเลข (หนึ่งรายการต่อหนึ่งบรรทัด)</span>
+                    <textarea id="actTraceText" rows="4" maxlength="2400" placeholder="ก&#10;ข&#10;แมว&#10;สวัสดี&#10;123"></textarea>
+                  </label>
+                  <div class="act-quick">
+                    <button type="button" class="btn btn-ghost" data-trace="กขฃคฅฆงจฉชซฌญฎฏฐฑฒณดตถทธนบปผฝพฟภมยรลวศษสหฬอฮ">พยัญชนะ ก–ฮ</button>
+                    <button type="button" class="btn btn-ghost" data-trace="0123456789">เลข 0–9</button>
+                    <button type="button" class="btn btn-ghost" data-trace="ABCDEFGHIJKLMNOPQRSTUVWXYZ">A–Z</button>
+                    <button type="button" class="btn btn-ghost" data-trace="abcdefghijklmnopqrstuvwxyz">a–z</button>
+                    <button type="button" id="actTraceClear" class="btn btn-ghost">🗑️ ล้าง</button>
+                  </div>
+                  <div class="act-row">
+                    <label class="field"><span class="field-label">ขนาดตัวอักษร</span>
+                      <select id="actTraceSize"><option value="14">เล็ก</option><option value="20" selected>กลาง</option><option value="28">ใหญ่</option></select>
+                    </label>
+                    <label class="field"><span class="field-label">แถวว่างให้เขียนเอง</span>
+                      <select id="actBlankRows"><option value="0">ไม่มี</option><option value="1" selected>1 แถว</option><option value="2">2 แถว</option></select>
+                    </label>
+                  </div>
+                  <div class="toggles">
+                    <label class="toggle"><input type="checkbox" id="actGuides" checked><span class="toggle-slider"></span><span class="toggle-label">มีเส้นบรรทัด</span></label>
+                  </div>
+                  <p class="hint">ตัวอักษรเดี่ยวจะซ้ำเต็มแถว คำยาวจะแสดงชุดเดียวต่อแถว</p>
+                </fieldset>
+
+                <fieldset class="act-section">
+                  <legend>3. จับคู่</legend>
+                  <div class="toggles">
+                    <label class="toggle"><input type="checkbox" id="actMatchOn"><span class="toggle-slider"></span><span class="toggle-label">สร้างหน้าจับคู่</span></label>
+                  </div>
+                  <div id="actMatchBody" hidden>
+                    <div class="act-row">
+                      <label class="field"><span class="field-label">รูปแบบจับคู่</span>
+                        <select id="actMatchMode">
+                          <option value="image_word" selected>ภาพ ↔ ชื่อ</option>
+                          <option value="image_shadow">ภาพ ↔ เงา</option>
+                          <option value="text_pairs">คำ ↔ คำ (พิมพ์เอง)</option>
+                        </select>
+                      </label>
+                      <label class="field"><span class="field-label">คู่ต่อหน้า</span>
+                        <select id="actPairs"><option>3</option><option selected>4</option><option>5</option><option>6</option></select>
+                      </label>
+                    </div>
+                    <p id="actMatchImagesNote" class="hint">ใช้ภาพในรายการ "ภาพในสมุด" (ต้องมีอย่างน้อย 2 ภาพ) และใช้ชื่อกำกับของแต่ละภาพเป็นคำตอบ — แก้ชื่อได้ในรายการ</p>
+                    <label id="actTextPairsBox" class="field" hidden><span class="field-label">คู่คำ บรรทัดละคู่ คั่นด้วย | (ซ้าย | ขวา)</span>
+                      <textarea id="actTextPairs" rows="4" maxlength="2400" placeholder="หมา | dog&#10;แมว | cat&#10;ปลา | fish"></textarea>
+                    </label>
+                    <div class="toggles">
+                      <label class="toggle"><input type="checkbox" id="actAnswerKey"><span class="toggle-slider"></span><span class="toggle-label">เพิ่มหน้าเฉลยท้ายเล่ม</span></label>
+                    </div>
+                  </div>
+                </fieldset>
+
+                <div class="actions">
+                  <button type="button" id="actBtn" class="btn btn-primary btn-lg">📝 สร้างหนังสือกิจกรรม</button>
+                </div>
+                <p id="actStatus" class="status" role="status" aria-live="polite"></p>
+              </div>
             </div>
           </section>
 

@@ -22,8 +22,17 @@ const SPECKLE_STEPS = [null, 0.00002, 0.00004, 0.00008, 0.00015, 0.0003];
 const el = (id) => document.getElementById(id);
 const dom = {
   // แท็บ
-  tabGen: el("tabGen"), tabWeb: el("tabWeb"), tabUpload: el("tabUpload"),
-  panelGen: el("panelGen"), panelWeb: el("panelWeb"), panelUpload: el("panelUpload"),
+  tabGen: el("tabGen"), tabWeb: el("tabWeb"), tabUpload: el("tabUpload"), tabActivity: el("tabActivity"),
+  panelGen: el("panelGen"), panelWeb: el("panelWeb"), panelUpload: el("panelUpload"), panelActivity: el("panelActivity"),
+  // หนังสือกิจกรรม
+  actTitle: el("actTitle"), actNameLine: el("actNameLine"), actFrame: el("actFrame"), actPageNo: el("actPageNo"),
+  actPatterns: el("actPatterns"), actPatternsAll: el("actPatternsAll"),
+  actTraceText: el("actTraceText"), actTraceClear: el("actTraceClear"),
+  actTraceSize: el("actTraceSize"), actBlankRows: el("actBlankRows"), actGuides: el("actGuides"),
+  actMatchOn: el("actMatchOn"), actMatchBody: el("actMatchBody"), actMatchMode: el("actMatchMode"),
+  actPairs: el("actPairs"), actMatchImagesNote: el("actMatchImagesNote"),
+  actTextPairsBox: el("actTextPairsBox"), actTextPairs: el("actTextPairs"),
+  actAnswerKey: el("actAnswerKey"), actBtn: el("actBtn"), actStatus: el("actStatus"),
   // สร้างภาพ
   genPrompt: el("genPrompt"), genStyles: el("genStyles"), genCount: el("genCount"),
   genBtn: el("genBtn"), genResults: el("genResults"), genImages: el("genImages"),
@@ -57,6 +66,7 @@ const TABS = [
   { tab: dom.tabGen, panel: dom.panelGen },
   { tab: dom.tabWeb, panel: dom.panelWeb },
   { tab: dom.tabUpload, panel: dom.panelUpload },
+  { tab: dom.tabActivity, panel: dom.panelActivity },
 ];
 function activateTab(targetTab) {
   for (const { tab, panel } of TABS) {
@@ -155,6 +165,8 @@ function setBusy(busy, label) {
   dom.previewBtn.disabled = busy || !hasItems;
   dom.convertBtn.disabled = busy || !hasItems || dom.skipConvert.checked;
   dom.bookBtn.disabled = busy || !hasItems;
+  dom.actBtn.disabled = busy;
+  dom.actBtn.textContent = busy && label === "activity" ? "⏳ กำลังสร้างหนังสือ..." : "📝 สร้างหนังสือกิจกรรม";
   dom.previewBtn.textContent = busy && label === "preview" ? "⏳ กำลังทำงาน..." : "👁️ ดูตัวอย่างหน้า A4";
   dom.convertBtn.textContent = busy && label === "convert" ? "⏳ กำลังแปลง..." : "✏️ 1. แปลงเป็นลายเส้น";
   dom.bookBtn.textContent = busy && label === "book" ? "⏳ กำลังรวมเล่ม..." : "📖 2. รวมเล่ม";
@@ -681,16 +693,9 @@ async function preview() {
     setBusy(false);
   }
 }
-/* ขั้นที่ 1: แปลงทีละรูป (คำขอสั้น เห็นความคืบหน้า และผลถูกเก็บไว้ที่เซิร์ฟเวอร์) */
-async function convertAll() {
-  if (state.items.length === 0) return false;
-  const key = convertKey();
-  const todo = state.items.filter((item) => item.convertedKey !== key);
-  if (todo.length === 0) {
-    setStatus("✅ แปลงครบทุกรูปแล้ว กด 'รวมเล่ม' ได้เลย");
-    return true;
-  }
-  setBusy(true, "convert");
+/* แปลงทีละรูป (คำขอสั้น เห็นความคืบหน้า และผลถูกเก็บไว้ที่เซิร์ฟเวอร์) คืน {ok, failed} */
+async function runConversion(todo, key, label) {
+  setBusy(true, label);
   let ok = 0;
   let failed = 0;
   try {
@@ -712,6 +717,7 @@ async function convertAll() {
         item.warning = data.notice || null;
         item.lineThumb = data.thumb;
         item.ref = data.ref;
+        item.refKey = key;
         item.convertedKey = key;
         ok++;
       } catch (_) {
@@ -724,6 +730,19 @@ async function convertAll() {
     renderItems();
     setBusy(false);
   }
+  return { ok, failed };
+}
+
+/* ขั้นที่ 1: แปลงรูปเป็นลายเส้น */
+async function convertAll() {
+  if (state.items.length === 0) return false;
+  const key = convertKey();
+  const todo = state.items.filter((item) => item.convertedKey !== key);
+  if (todo.length === 0) {
+    setStatus("✅ แปลงครบทุกรูปแล้ว กด 'รวมเล่ม' ได้เลย");
+    return true;
+  }
+  const { ok, failed } = await runConversion(todo, key, "convert");
   if (failed > 0) {
     setStatus(`แปลงสำเร็จ ${ok} รูป · ไม่สำเร็จ ${failed} รูป (ดูข้อความใต้รูปที่มีปัญหา)`, "warn");
   } else {
@@ -807,6 +826,172 @@ async function makeBook() {
   }
 }
 
+/* ---------- แท็บหนังสือกิจกรรม ---------- */
+const PREWRITING = [
+  ["vertical", "เส้นตรงตั้ง"], ["horizontal", "เส้นตรงนอน"], ["slant", "เส้นเฉียง"],
+  ["wave", "เส้นคลื่น"], ["zigzag", "เส้นซิกแซก"], ["circle", "วงกลม"], ["loop", "เส้นวน"],
+];
+
+function setActStatus(message, kind = "") {
+  dom.actStatus.textContent = message || "";
+  dom.actStatus.className = "status" + (kind ? " " + kind : "");
+}
+
+function buildPatternChecks() {
+  dom.actPatterns.replaceChildren();
+  for (const [id, label] of PREWRITING) {
+    const wrap = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox"; box.value = id;
+    const text = document.createElement("span");
+    text.textContent = label;
+    wrap.append(box, text);
+    dom.actPatterns.appendChild(wrap);
+  }
+}
+function selectedPatterns() {
+  return Array.from(dom.actPatterns.querySelectorAll("input:checked")).map((i) => i.value);
+}
+
+function parseTextPairs() {
+  return dom.actTextPairs.value
+    .split("\n")
+    .map((line) => line.split("|").map((part) => part.trim()))
+    .filter((parts) => parts.length >= 2 && parts[0] && parts[1])
+    .map((parts) => [parts[0], parts.slice(1).join("|").trim()]);
+}
+
+function activityPayload() {
+  const matchOn = dom.actMatchOn.checked;
+  const mode = dom.actMatchMode.value;
+  return {
+    title: dom.actTitle.value.trim() || "สมุดกิจกรรม",
+    show_name_line: dom.actNameLine.checked,
+    show_frame: dom.actFrame.checked,
+    show_page_number: dom.actPageNo.checked,
+    prewriting: selectedPatterns(),
+    trace_items: dom.actTraceText.value.split("\n").map((t) => t.trim()).filter(Boolean),
+    trace_size_mm: Number(dom.actTraceSize.value),
+    trace_blank_rows: Number(dom.actBlankRows.value),
+    trace_guides: dom.actGuides.checked,
+    match_mode: mode,
+    pairs_per_page: Number(dom.actPairs.value),
+    answer_key: matchOn && dom.actAnswerKey.checked,
+    images: [],
+    text_pairs: matchOn && mode === "text_pairs" ? parseTextPairs() : [],
+  };
+}
+
+function syncActivityMatchUi() {
+  const on = dom.actMatchOn.checked;
+  dom.actMatchBody.hidden = !on;
+  const textMode = dom.actMatchMode.value === "text_pairs";
+  dom.actTextPairsBox.hidden = !textMode;
+  dom.actMatchImagesNote.hidden = textMode;
+}
+
+/* ทำให้ทุกรูปมีผลแปลงที่เซิร์ฟเวอร์ (ไม่ว่าจะเปิดโหมดไม่แปลงหรือไม่) แล้วคืนรายการที่ใช้ได้ */
+async function ensureRefs() {
+  const key = convertKey();
+  const todo = state.items.filter((item) => item.refKey !== key);
+  if (todo.length > 0) await runConversion(todo, key, "activity");
+  return state.items.filter((item) => item.refKey === key && item.ref);
+}
+
+async function postActivity(payload) {
+  return fetch("/api/activity", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function makeActivity() {
+  if (state.busy) return;
+  const payload = activityPayload();
+  const needImages = dom.actMatchOn.checked && payload.match_mode !== "text_pairs";
+
+  if (dom.actMatchOn.checked && payload.match_mode === "text_pairs" && payload.text_pairs.length < 2) {
+    setActStatus("หน้าจับคู่แบบคำต้องมีอย่างน้อย 2 คู่ (พิมพ์บรรทัดละคู่ เช่น หมา | dog)", "warn");
+    return;
+  }
+  if (needImages && state.items.length < 2) {
+    setActStatus("หน้าจับคู่ด้วยภาพต้องมีภาพในสมุดอย่างน้อย 2 ภาพ", "warn");
+    return;
+  }
+  if (!payload.prewriting.length && !payload.trace_items.length && !dom.actMatchOn.checked) {
+    setActStatus("ยังไม่ได้เลือกกิจกรรม: เลือกฝึกลากเส้น พิมพ์ข้อความให้เขียนตามรอยประ หรือเปิดหน้าจับคู่", "warn");
+    return;
+  }
+
+  setBusy(true, "activity");
+  clearPages();
+  setActStatus("⏳ กำลังสร้างหนังสือกิจกรรม...");
+  try {
+    if (needImages) {
+      setBusy(false);
+      const usable = await ensureRefs();
+      if (usable.length < 2) {
+        setActStatus("แปลงรูปไม่สำเร็จเกินครึ่ง จึงจับคู่ไม่ได้ (ดูข้อความใต้รูปที่มีปัญหา)", "error");
+        return;
+      }
+      setBusy(true, "activity");
+      payload.images = usable.map((i) => ({ ref: i.ref, caption: i.caption }));
+    }
+    let response = await postActivity(payload);
+    if (response.status === 409) {
+      // ผลแปลงบางรูปหมดอายุที่เซิร์ฟเวอร์ → แปลงเฉพาะรูปนั้นใหม่แล้วลองอีกครั้ง
+      const info = await response.json();
+      const key = convertKey();
+      for (const index of info.missing || []) {
+        const item = state.items.find((i) => i.ref === payload.images[index]?.ref);
+        if (item) item.refKey = null;
+      }
+      setBusy(false);
+      const usable = await ensureRefs();
+      setBusy(true, "activity");
+      payload.images = usable.map((i) => ({ ref: i.ref, caption: i.caption }));
+      response = await postActivity(payload);
+    }
+    if (!response.ok) {
+      setActStatus(await readError(response), "error");
+      return;
+    }
+    const data = await response.json();
+    showPages(data.pages);
+    dom.pagesCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    const extra = (data.warnings || []).join(" · ");
+    setActStatus(
+      `✅ สร้างแล้ว ${data.count} หน้า — ตรวจดูด้านล่างแล้วกด 'พิมพ์ทุกหน้า'` + (extra ? " — " + extra : ""),
+      extra ? "warn" : ""
+    );
+  } catch (_) {
+    setActStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function initActivity() {
+  buildPatternChecks();
+  syncActivityMatchUi();
+  dom.actPatternsAll.addEventListener("click", () => {
+    const boxes = Array.from(dom.actPatterns.querySelectorAll("input"));
+    const allOn = boxes.every((b) => b.checked);
+    for (const b of boxes) b.checked = !allOn;
+    dom.actPatternsAll.textContent = allOn ? "✓ เลือกทั้งหมด" : "✕ ยกเลิกทั้งหมด";
+  });
+  document.querySelectorAll("[data-trace]").forEach((button) => {
+    button.addEventListener("click", () => {
+      dom.actTraceText.value = Array.from(button.dataset.trace).join("\n");
+    });
+  });
+  dom.actTraceClear.addEventListener("click", () => { dom.actTraceText.value = ""; });
+  dom.actMatchOn.addEventListener("change", syncActivityMatchUi);
+  dom.actMatchMode.addEventListener("change", syncActivityMatchUi);
+  dom.actBtn.addEventListener("click", makeActivity);
+}
+
 /* สั่งพิมพ์ทุกหน้าจากภาพที่รวมเล่มแล้ว ไม่ต้องใช้ไฟล์ PDF */
 let printFrame = null;
 function printPages() {
@@ -858,6 +1043,7 @@ function init() {
     dom.perPage.appendChild(option);
   }
   initTabs();
+  initActivity();
   dom.pick.addEventListener("click", (e) => {
     e.stopPropagation();
     dom.picker.click();
