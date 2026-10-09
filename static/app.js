@@ -44,6 +44,7 @@ const dom = {
   frame: el("frame"), cover: el("cover"),
   caption: el("caption"), pagenum: el("pagenum"),
   previewBtn: el("previewBtn"), convertBtn: el("convertBtn"), bookBtn: el("bookBtn"),
+  busyAnim: el("busyAnim"), busyBarWrap: el("busyBarWrap"), busyBar: el("busyBar"),
   pagesCard: el("pagesCard"), pagesGrid: el("pagesGrid"),
   pagesCount: el("pagesCount"), printBtn: el("printBtn"),
   status: el("status"), previewWrap: el("previewWrap"), previewImg: el("previewImg"),
@@ -111,6 +112,11 @@ function setStatus(message, kind = "") {
   dom.status.textContent = message || "";
   dom.status.className = "status" + (kind ? " " + kind : "");
 }
+function setProgress(fraction) {
+  const determinate = fraction !== null && fraction !== undefined;
+  dom.busyBarWrap.classList.toggle("indeterminate", !determinate);
+  dom.busyBar.style.width = determinate ? Math.round(fraction * 100) + "%" : "";
+}
 function clearPages() {
   state.pages = [];
   dom.pagesGrid.replaceChildren();
@@ -142,6 +148,9 @@ function isConverted(item) {
 }
 function setBusy(busy, label) {
   state.busy = busy;
+  // แอนิเมชันระหว่างรอ: แปลงรูปมีแถบความคืบหน้าจริง ส่วนอย่างอื่นเป็นแถบวิ่งไม่รู้ระยะ
+  dom.busyAnim.hidden = !busy;
+  if (busy) setProgress(label === "convert" ? 0 : null);
   const hasItems = state.items.length > 0;
   dom.previewBtn.disabled = busy || !hasItems;
   dom.convertBtn.disabled = busy || !hasItems || dom.skipConvert.checked;
@@ -688,6 +697,7 @@ async function convertAll() {
     for (let i = 0; i < todo.length; i++) {
       const item = todo[i];
       setStatus(`⏳ กำลังแปลงรูปที่ ${i + 1} จาก ${todo.length}: ${item.name}`);
+      setProgress(i / todo.length);
       const body = new FormData();
       body.append("file", item.file, item.name);
       body.append("lineart", key);
