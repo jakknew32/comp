@@ -72,8 +72,10 @@ def test_cloudflare_needs_both_token_and_account_id() -> None:
 
 
 def test_unknown_provider_does_not_crash_loading() -> None:
-    settings = load_settings({"AI_PROVIDER": "ไม่มีเจ้านี้"})
-    assert settings.provider == AiProvider.GEMINI
+    """ชื่อเจ้าที่ไม่รู้จักต้องตกไปใช้ค่าเริ่มต้น ไม่ใช่ทำให้เซิร์ฟเวอร์ล้ม"""
+    assert load_settings({"AI_PROVIDER": "ไม่มีเจ้านี้"}).provider == (
+        load_settings({}).provider
+    )
 
 
 # --- Pollinations -------------------------------------------------------------

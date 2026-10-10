@@ -74,24 +74,33 @@ class AiProvider(str, Enum):
         try:
             return cls((value or "").strip().lower())
         except ValueError:
-            return cls.GEMINI
+            return DEFAULT_PROVIDER
 
 
-# ลำดับที่ลองใหม่เมื่อเจ้าหลักล้ม เรียงจากที่ไม่เสียเงินและไม่ต้องมีคีย์ก่อน
-# เพราะถ้าเจ้าหลักคือเจ้าที่เครดิตจำกัด เว็บจะล้มตามเจ้านั้นไปตลอด
+# ลำดับที่ลองใหม่เมื่อเจ้าหลักล้ม เรียงจากคุณภาพดีและไม่เสียเงินก่อน
+#
+# Cloudflare มาก่อนเพราะคุณภาพดีกว่า (FLUX.1-schnell) ไม่มีลายน้ำ
+# และไม่มีการจำกัดต่อวินาที ต่างจาก Pollinations ที่ต้องรอ 15 วินาทีต่อคำขอ
+# ข้อเสียคือต้องมีคีย์ ถ้ายังไม่ได้ตั้งจะถูกข้ามไปเองไม่ใช่ล้ม
+#
 # ตัวที่เสียเงินจริงอย่าง Gemini ต้องอยู่ท้าย ใช้เมื่อทางอื่นไม่เหลือ
 FALLBACK_ORDER = (
-    AiProvider.POLLINATIONS,
     AiProvider.CLOUDFLARE,
+    AiProvider.POLLINATIONS,
     AiProvider.GEMINI,
     AiProvider.HUGGINGFACE,
 )
 
+# เจ้าที่เลือกเมื่อไม่ได้ตั้ง AI_PROVIDER
+# Cloudflare คุณภาพดีที่สุดในกลุ่มฟรี ถ้ายังไม่มีคีย่จะตกไปใช้ตัวถัดไปเอง
+DEFAULT_PROVIDER = AiProvider.CLOUDFLARE
+
 # ข้อความบอกผู้ใช้เมื่อทุกเจ้าล้มหมด ต้องบอกทางออกที่ทำได้จริง
 NO_PROVIDER_READY_MESSAGE = (
     "ยังสร้างภาพด้วย AI ไม่ได้ เพราะไม่มีผู้ให้บริการที่พร้อมใช้งาน "
-    "โปรแกรมนี้มีทางฟรีที่ใช้ได้ทันทีคือ Pollinations "
-    "ให้ตั้ง AI_PROVIDER=pollinations (หรือเติมโทเคนของเจ้าที่ต้องการ) แล้ว deploy ใหม่"
+    "โปรแกรมนี้มีทางฟรีที่ใช้ได้ทันทีคือ Pollinations ไม่ต้องสมัคร "
+    "ถ้าอยากได้คุณภาพดีขึ้นให้เติม CF_API_TOKEN และ CF_ACCOUNT_ID "
+    "(ฟรี 10,000 neurons ต่อวัน) แล้วตั้ง AI_PROVIDER=cloudflare"
 )
 
 
@@ -99,7 +108,7 @@ NO_PROVIDER_READY_MESSAGE = (
 class AiSettings:
     """ผลการอ่านตั้งค่า AI จากสภาพแวดล้อม"""
 
-    provider: AiProvider = AiProvider.GEMINI
+    provider: AiProvider = DEFAULT_PROVIDER
     api_key: str | None = None
     hf_token: str | None = None
     model: str = DEFAULT_MODEL

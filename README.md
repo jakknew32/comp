@@ -126,27 +126,22 @@ OpenCV ทำได้แค่กรองภาพ ไม่สามารถ
 โปรแกรมไม่ได้พึ่งผู้ให้บริการเดียว เพราะเครดิตของแต่ละเจ้าหมดคนละเวลา
 ถ้าเจ้าหลักล้ม (เครดิตหมด โควตาหมด เซิร์ฟเวอร์ล่ม) ระบบจะลองเจ้าถัดไปให้เองโดยไม่ต้องรอผู้ใช้กดอะไร
 
-ลำดับที่ลอง: **เจ้าที่ตั้งไว้** → Pollinations → Cloudflare → Gemini → Hugging Face
+ลำดับที่ลอง: **เจ้าที่ตั้งไว้** → Cloudflare → Pollinations → Gemini → Hugging Face
+
+Cloudflare มาก่อนเพราะคุณภาพดีกว่า (FLUX.1-schnell) ไม่มีลายน้ำ และไม่มีการจำกัดต่อวินาที
+เจ้าที่ยังไม่ได้ตั้งคีย์จะถูกข้ามตั้งแต่ต้น ไม่ต้องรอให้ล้มจริงแล้วค่อยเปลี่ยน
 
 ตรวจสถานะที่ใช้งานอยู่ได้จาก `/api/health` ดูคีย์ `ai.fallback_chain`
 ตั้ง `AI_ALLOW_FALLBACK=false` ได้ถ้าต้องการให้ล้มที่เจ้าหลักเลยโดยไม่เงียบ ๆ ไปใช้เจ้าอื่น
 
 ### ผู้ให้บริการฟรีที่ใช้ได้ทันที
 
-**Pollinations** — เรียกได้เลยโดยไม่ต้องสมัคร ไม่ต้องมีคีย์
-
-| ตัวแปร | ค่า | หมายเหตุ |
-|---|---|---|
-| `AI_PROVIDER` | `pollinations` | ค่าเริ่มต้นใน render.yaml |
-| `POLLINATIONS_MODEL` | `turbo` (เร็ว) หรือ `flux` (คุณภาพดีกว่าแต่ช้า) | |
-| `POLLINATIONS_TOKEN` | ไม่ต้องใส่ | ไม่ใส่ได้ 1 คำขอ/15 วิ สมัครฟรีที่ [auth.pollinations.ai](https://auth.pollinations.ai) ได้ 1 คำขอ/5 วิ และเอาลายน้ำออก |
-
-**Cloudflare Workers AI** — ฟรี 10,000 neurons/วัน รีเซ็ต 00:00 UTC ไม่ต้องใส่บัตร
-สร้าง API Token ที่ [dash.cloudflare.com](https://dash.cloudflare.com) (Workers AI) แล้วเอา Account ID มาด้วย
+**Cloudflare Workers AI** (แนะนำ) — คุณภาพดีที่สุดในกลุ่มฟรี ไม่มีลายน้ำ ไม่จำกัดต่อวินาที
+ฟรี 10,000 neurons/วัน รีเซ็ต 00:00 UTC ไม่ต้องใส่บัตร
 
 | ตัวแปร | ค่า |
 |---|---|
-| `AI_PROVIDER` | `cloudflare` |
+| `AI_PROVIDER` | `cloudflare` (ค่าเริ่มต้นใน render.yaml) |
 | `CF_API_TOKEN` | โทเคนของคุณ (สร้างที่ dash.cloudflare.com/profile/api-tokens) |
 | `CF_ACCOUNT_ID` | Account ID ของคุณ |
 | `CF_IMAGE_MODEL` | `@cf/black-forest-labs/flux-1-schnell` (ค่าเริ่มต้น) |
@@ -154,6 +149,14 @@ OpenCV ทำได้แค่กรองภาพ ไม่สามารถ
 โควตาฟรี 10,000 neurons/วัน FLUX.1-schnell กินราว **75 neurons ต่อภาพ** (4 ก้าว + tile 1024x1024)
 นั่นคือได้ฟรี **~130 ภาพต่อวัน** มากกว่าที่เว็บนี้ใช้แน่นอน
 ดูโควตาที่เหลือได้ที่ [dash.cloudflare.com](https://dash.cloudflare.com/?to=/:account/ai/workers-ai)
+
+**Pollinations** — เรียกได้เลยโดยไม่ต้องสมัคร ไม่ต้องมีคีย์ เป็นตัวสำรองเมื่อ Cloudflare ยังไม่พร้อม
+
+| ตัวแปร | ค่า | หมายเหตุ |
+|---|---|---|
+| `AI_PROVIDER` | `pollinations` | ถ้าอยากบังคับให้ใช้ตัวนี้เป็นอันดับแรก |
+| `POLLINATIONS_MODEL` | `turbo` (เร็ว) หรือ `flux` (คุณภาพดีกว่าแต่ช้า) | |
+| `POLLINATIONS_TOKEN` | ไม่ต้องใส่ | ไม่ใส่ได้ 1 คำขอ/15 วิ สมัครฟรีที่ [auth.pollinations.ai](https://auth.pollinations.ai) ได้ 1 คำขอ/5 วิ และเอาลายน้ำออก |
 
 > ข้อจำกัดของสองเจ้านี้: รับได้เฉพาะ **ข้อความ** ทำภาพใหม่จากคำบรรยายได้เท่านั้น
 > ฟีเจอร์ "แปลงภาพถ่ายเป็นลายเส้นด้วย AI" ยังต้องใช้ Gemini หรือ Hugging Face เหมือนเดิม

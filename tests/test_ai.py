@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from app import ai
-from app.ai import gemini
+from app.ai import gemini, generate
 from app.ai.settings import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -23,6 +23,8 @@ from app.ai.settings import (
     ENV_BASE_URL,
     ENV_MODEL,
     ENV_TIMEOUT,
+    FALLBACK_ORDER,
+    AiProvider,
     load_settings,
 )
 from tests import fixtures
@@ -56,21 +58,50 @@ def test_no_key_means_not_configured() -> None:
     settings = load_settings({})
     assert settings.configured is True, "ต้องมีทางออกฟรีเสมอ ไม่งั้นเว็บจะใช้ไม่ได้"
 
-    offline = load_settings({"AI_ALLOW_FALLBACK": "false"})
+    offline = load_settings({"AI_PROVIDER": "gemini", "AI_ALLOW_FALLBACK": "false"})
     assert offline.configured is False
     assert offline.model == DEFAULT_MODEL
     assert offline.base_url == DEFAULT_BASE_URL
     assert ENV_API_KEY in offline.describe_missing()
 
 
+def test_default_provider_is_cloudflare() -> None:
+    """ค่าเริ่มต้นต้องเป็นเจ้าที่คุณภาพดีที่สุดในกลุ่มฟรี"""
+    assert load_settings({}).provider == AiProvider.CLOUDFLARE
+    assert load_settings({"AI_PROVIDER": "ไม่รู้จัก"}).provider == AiProvider.CLOUDFLARE
+
+
+def test_cloudflare_comes_before_pollinations_in_fallback() -> None:
+    """Cloudflare ต้องมาก่อน Pollinations เพราะคุณภาพดีกว่า"""
+    assert FALLBACK_ORDER.index(AiProvider.CLOUDFLARE) < FALLBACK_ORDER.index(
+        AiProvider.POLLINATIONS
+    )
+    # เจ้าที่เสียเงินจริงต้องอยู่ท้ายสุด
+    assert FALLBACK_ORDER[-1] == AiProvider.HUGGINGFACE
+
+
+def test_chosen_provider_stays_first_even_if_less_good() -> None:
+    """ถ้าผู้ดูแลเลือกเจ้าเอง ต้องเคารพลำดับนั้น ไม่ override"""
+    settings = load_settings(
+        {
+            "AI_PROVIDER": "pollinations",
+            "CF_API_TOKEN": "t",
+            "CF_ACCOUNT_ID": "a",
+        }
+    )
+    assert [p.value for p in generate.provider_chain(settings)][0] == "pollinations"
+
+
 def test_key_enables_ai() -> None:
-    settings = load_settings({ENV_API_KEY: "  secret-key  "})
+    settings = load_settings({ENV_API_KEY: "  secret-key  ", "AI_PROVIDER": "gemini"})
     assert settings.configured is True
     assert settings.api_key == "secret-key"
 
 
 def test_blank_key_is_treated_as_absent() -> None:
-    blank = load_settings({ENV_API_KEY: "   ", "AI_ALLOW_FALLBACK": "false"})
+    blank = load_settings(
+        {"AI_PROVIDER": "gemini", ENV_API_KEY: "   ", "AI_ALLOW_FALLBACK": "false"}
+    )
     assert blank.api_key is None
     assert blank.configured is False
 
@@ -91,15 +122,28 @@ def test_bad_timeout_falls_back_to_default() -> None:
 
 
 def test_masked_key_never_leaks_secret() -> None:
-    settings = load_settings({ENV_API_KEY: "super-secret-value-1234"})
-    masked = settings.masked_key()
-    assert "super" not in masked
-    assert masked.endswith("1234")
+    """ขี้บังคีย์ต้องครอบคลุมทุกเจ้า ไม่ใช่เฉพาะ Gemini"""
+    gemini_settings = load_settings(
+        {ENV_API_KEY: "super-secret-value-1234", "AI_PROVIDER": "gemini"}
+    )
+    assert gemini_settings.masked_key().endswith("1234")
+    assert "super" not in gemini_settings.masked_key()
+
+    cf_settings = load_settings(
+        {"CF_API_TOKEN": "cf-secret-value-5678", "AI_PROVIDER": "cloudflare"}
+    )
+    assert cf_settings.masked_key().endswith("5678")
+    assert "secret" not in cf_settings.masked_key()
+
+    hf_settings = load_settings({"HF_TOKEN": "hf-secret-value-9012"})
+    assert "secret" not in hf_settings.masked_key()
 
 
 def test_status_hides_cost_when_unconfigured() -> None:
     """ไม่มีเจ้าไหนพร้อมเลยจริง ๆ ต้องไม่โชว์ราคาและต้องบอกว่าตั้งค่าอะไร"""
-    data = ai.status(load_settings({"AI_ALLOW_FALLBACK": "false"}))
+    data = ai.status(
+        load_settings({"AI_PROVIDER": "gemini", "AI_ALLOW_FALLBACK": "false"})
+    )
     assert data["configured"] is False
     assert data["model"] is None
     assert data["estimated_cost_per_image_usd"] is None
@@ -107,16 +151,27 @@ def test_status_hides_cost_when_unconfigured() -> None:
 
 
 def test_status_reports_free_provider_when_no_key() -> None:
-    """ไม่มีคีย์เลยต้องโชว์ว่าใช้เจ้าฟรี ราคาเป็นศูนย์ ไม่ใช่โชว์ราคา Gemini"""
+    """ไม่มีคีย์เลยต้องโชว์เจ้าฟรีที่จะใช้จริง ราคาเป็นศูนย์"""
     data = ai.status(load_settings({}))
     assert data["configured"] is True
-    assert data["provider"] == "pollinations"
+    assert data["provider"] == "pollinations", "ยังไม่มีคีย์ CF ต้องตกไปใช้ Pollinations"
     assert data["estimated_cost_per_image_usd"] == 0.0
     assert "pollinations" in data["fallback_chain"]
 
 
+def test_status_picks_cloudflare_once_key_is_set() -> None:
+    """ตั้งคีย์ Cloudflare แล้วต้องรายงานว่าใช้ Cloudflare จริง"""
+    data = ai.status(
+        load_settings({"CF_API_TOKEN": "t", "CF_ACCOUNT_ID": "acct-1"})
+    )
+    assert data["provider"] == "cloudflare"
+    assert data["fallback_chain"][0] == "cloudflare"
+    assert "pollinations" in data["fallback_chain"], "ต้องมี Pollinations สำรอง"
+    assert data["estimated_cost_per_image_usd"] == 0.0
+
+
 def test_status_reports_cost_when_configured() -> None:
-    data = ai.status(load_settings({ENV_API_KEY: "k"}))
+    data = ai.status(load_settings({ENV_API_KEY: "k", "AI_PROVIDER": "gemini"}))
     assert data["configured"] is True
     assert data["model"] == DEFAULT_MODEL
     assert data["estimated_cost_per_image_usd"] > 0

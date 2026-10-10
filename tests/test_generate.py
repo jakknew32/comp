@@ -83,7 +83,7 @@ def test_generate_reports_missing_key() -> None:
     ต้องปิดทางออกฟรีไว้ด้วย ไม่ใช่บอกให้ใส่คีย์เฉพาะทางเดียว
     เพราะ Pollinations ใช้ได้เลยโดยไม่ต้องมีคีย์
     """
-    settings = load_settings({"AI_ALLOW_FALLBACK": "false"})
+    settings = load_settings({"AI_PROVIDER": "gemini", "AI_ALLOW_FALLBACK": "false"})
     result = generate.generate_image("แมว", None, settings)
     assert result.ok is False
     assert ENV_API_KEY in (result.note or "")
@@ -104,7 +104,9 @@ def test_generate_rejects_overlong_prompt() -> None:
 
 
 def test_generate_wraps_api_error_as_note(monkeypatch) -> None:
-    settings = load_settings({ENV_API_KEY: "k", "AI_ALLOW_FALLBACK": "false"})
+    settings = load_settings(
+        {ENV_API_KEY: "k", "AI_PROVIDER": "gemini", "AI_ALLOW_FALLBACK": "false"}
+    )
 
     def boom(*_args, **_kwargs):
         raise generate.AiError("โควตาหมด")
@@ -232,7 +234,8 @@ def test_gemini_request_is_text_only(monkeypatch) -> None:
 
 def test_generate_endpoint_rejects_unconfigured(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.main._ai_settings", lambda: load_settings({"AI_ALLOW_FALLBACK": "false"})
+        "app.main._ai_settings",
+        lambda: load_settings({"AI_PROVIDER": "gemini", "AI_ALLOW_FALLBACK": "false"}),
     )
     response = client.post("/api/generate", json={"prompt": "แมว"})
     assert response.status_code == 400
