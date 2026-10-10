@@ -92,24 +92,32 @@ def _decode_image(data_b64: str) -> np.ndarray:
     return image
 
 
-def _extract_image(payload: dict) -> str:
+def _extract_image(payload: object) -> str:
     """ดึงภาพฐานสิบหกจากคำตอบของ API
 
     API อาจคืนหลายส่วนมา จึงเลือกส่วนที่เป็นภาพชิ้นแรก
+    ตรวจชนิดข้อมูลทุกชั้น เพราะคำตอบที่ผิดรูปแบบต้องกลายเป็นข้อความอธิบาย ไม่ใช่ AttributeError
     """
+    if not isinstance(payload, dict):
+        detail = message_from_payload(payload)
+        raise AiError("AI ตอบกลับรูปแบบที่ไม่รู้จัก" + (f": {detail[:200]}" if detail else ""))
+
     candidates = payload.get("candidates") or []
-    for candidate in candidates:
-        parts = ((candidate.get("content") or {}).get("parts")) or []
-        for part in parts:
+    for candidate in candidates if isinstance(candidates, list) else []:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content")
+        parts = content.get("parts") if isinstance(content, dict) else None
+        for part in parts if isinstance(parts, list) else []:
+            if not isinstance(part, dict):
+                continue
             inline = part.get("inlineData") or part.get("inline_data")
-            if inline and inline.get("data"):
+            if isinstance(inline, dict) and inline.get("data"):
                 return inline["data"]
 
     blocked = payload.get("promptFeedback") or payload.get("prompt_feedback")
-    if blocked and blocked.get("blockReason"):
-        raise AiError(
-            "AI ไม่ประมวลผลคำขอนี้: " + str(blocked.get("blockReason"))
-        )
+    if isinstance(blocked, dict) and blocked.get("blockReason"):
+        raise AiError("AI ไม่ประมวลผลคำขอนี้: " + str(blocked.get("blockReason")))
     raise AiError("AI ไม่ได้ส่งภาพกลับมา")
 
 
@@ -169,6 +177,36 @@ def convert_to_lineart(
     return _decode_image(_extract_image(payload))
 
 
+def message_from_payload(payload: object) -> str:
+    """ดึงข้อความ error จากเนื้อ JSON ที่ API ตอบมา ไม่ว่าโครงสร้างจะเป็นแบบไหน
+
+    ผู้ให้บริการแต่ละเจ้าตอบไม่เหมือนกัน เช่น
+      {"error": {"message": "..."}}   (Google)
+      {"error": "..."}                (Hugging Face)
+      "..."                           (ข้อความล้วนที่เข้ารหัสเป็น JSON)
+      [{"message": "..."}]            (รายการ)
+    เดิมโค้ดสมมติว่า "error" เป็น dict เสมอ พอเจอ string จึงล้มด้วย AttributeError
+    แล้วข้อความ error จริงที่ผู้ใช้ต้องการอ่านก็หายไป
+    """
+    if isinstance(payload, str):
+        return payload.strip()
+    if isinstance(payload, list):
+        for item in payload:
+            message = message_from_payload(item)
+            if message:
+                return message
+        return ""
+    if isinstance(payload, dict):
+        for key in ("error", "message", "error_description", "detail"):
+            value = payload.get(key)
+            if value in (None, ""):
+                continue
+            message = message_from_payload(value)
+            if message:
+                return message
+    return ""
+
+
 def _read_http_error(exc: urllib.error.HTTPError) -> str:
     """ดึงข้อความที่มีประโยชน์จาก error ของ API
 
@@ -176,11 +214,10 @@ def _read_http_error(exc: urllib.error.HTTPError) -> str:
     """
     try:
         raw = exc.read().decode("utf-8", "replace")
-        payload = json.loads(raw)
-        message = ((payload.get("error") or {}).get("message")) or ""
+        message = message_from_payload(json.loads(raw))
         if message:
             return message[:200]
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (json.JSONDecodeError, OSError, ValueError, AttributeError, TypeError):
         pass
 
     if exc.code in (401, 403):

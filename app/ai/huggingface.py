@@ -19,7 +19,7 @@ import urllib.request
 import cv2
 import numpy as np
 
-from .gemini import describe_connection_error
+from .gemini import describe_connection_error, message_from_payload
 from .settings import AiSettings
 
 # ปลายทางมาจาก settings.hf_base_url เสมอ เพื่อให้เปลี่ยนได้ด้วย AI_HF_BASE_URL
@@ -101,10 +101,10 @@ def _read_http_error(exc: urllib.error.HTTPError) -> str:
     """แปลง error ของ API เป็นข้อความที่ผู้ใช้อ่านเข้าใจ"""
     try:
         payload = json.loads(exc.read().decode("utf-8", "replace"))
-        message = payload.get("error") or payload.get("error_description") or ""
+        message = message_from_payload(payload)
         if message:
-            return str(message)[:200]
-    except (json.JSONDecodeError, OSError, ValueError):
+            return message[:200]
+    except (json.JSONDecodeError, OSError, ValueError, AttributeError, TypeError):
         pass
 
     if exc.code == 401:

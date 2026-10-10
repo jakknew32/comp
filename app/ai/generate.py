@@ -191,7 +191,9 @@ def generate_with_huggingface(
         with urllib.request.urlopen(request, timeout=settings.timeout) as response:
             raw = response.read()
     except urllib.error.HTTPError as exc:
-        raise AiError(f"AI ตอบกลับข้อผิดพลาด {exc.code}: {_read_http_error(exc)}") from exc
+        raise AiError(
+            f"AI ตอบกลับข้อผิดพลาด {exc.code}: {huggingface._read_http_error(exc)}"
+        ) from exc
     except urllib.error.URLError as exc:
         raise AiError(describe_connection_error(url, exc)) from exc
     except TimeoutError as exc:
