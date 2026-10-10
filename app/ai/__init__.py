@@ -10,11 +10,15 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from ..lineart import detect
 from . import gemini, generate, huggingface  # noqa: F401 - generate ใช้ re-export ผ่านแพ็กเกจนี้
 from .gemini import AiError
+
+logger = logging.getLogger("coloring_book.ai")
 from .generate import (
     GenerateResult,
     STYLE_PRESETS,
@@ -163,7 +167,15 @@ def enhance(
     except AiError as exc:
         return AiOutcome(False, image, f"ใช้ AI ไม่สำเร็จ: {exc}")
     except Exception as exc:  # noqa: BLE001 - ต้องกันไม่ให้ขั้นตอนอื่นพัง
-        return AiOutcome(False, image, f"ใช้ AI ไม่สำเร็จ: {type(exc).__name__}")
+        detail = str(exc).strip() or type(exc).__name__
+        logger.exception("เรียก AI ไม่สำเร็จ")
+        return AiOutcome(
+            False,
+            image,
+            f"ใช้ AI ไม่สำเร็จ: {type(exc).__name__}: {detail[:200]}"
+            " — ถ้าเห็นข้อความว่าขาด attribute "
+            "แปลว่าเซิร์ฟเวอร์ยังรันโค้ดเก่าอยู่ ต้อง deploy ใหม่",
+        )
 
     if converted.size == 0:
         return AiOutcome(False, image, "AI คืนภาพที่ว่างเปล่า")

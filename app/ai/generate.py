@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import urllib.error
 import urllib.request
 
@@ -26,6 +27,8 @@ from .gemini import (
 )
 from . import huggingface
 from .settings import AiProvider, AiSettings
+
+logger = logging.getLogger("coloring_book.ai")
 
 # สไตล์สำเร็จรูป แต่ละสไตล์คือคำสั่งเสริมที่แปะต่อท้ายคำบรรยายของผู้ใช้
 # ผู้ใช้ไม่ต้องรู้ศัพท์เทคนิค ก็ได้ภาพตามระดับอายุที่ต้องการ
@@ -254,7 +257,17 @@ def generate_image(
     except AiError as exc:
         return GenerateResult(None, f"สร้างภาพไม่สำเร็จ: {exc}")
     except Exception as exc:  # noqa: BLE001 - กันไม่ให้คำขอเดียวทำเซิร์ฟเวอร์ล้ม
-        return GenerateResult(None, f"สร้างภาพไม่สำเร็จ: {type(exc).__name__}")
+        # ต้องแสดงข้อความจริงด้วย ไม่ใช่แค่ชื่อชนิด error
+        # เพราะถ้าเห็นแต่ "AttributeError" จะไม่รู้ว่าขาดอะไร ต้องเดาสุ่มไปเรื่อย
+        # และ error ชนิดนี้มักแปลว่าเซิร์ฟเวอร์ยังรันโค้ดเก่าที่ยังไม่ได้แก้
+        detail = str(exc).strip() or type(exc).__name__
+        logger.exception("สร้างภาพไม่สำเร็จ (%s)", chosen)
+        return GenerateResult(
+            None,
+            f"สร้างภาพไม่สำเร็จ: {type(exc).__name__}: {detail[:200]}"
+            " — ถ้าเห็นข้อความว่าขาด attribute หรือชื่อโมเดลผิด "
+            "แปลว่าเซิร์ฟเวอร์ยังรันโค้ดเก่าอยู่ ต้อง deploy ใหม่",
+        )
 
     if image.size == 0:
         return GenerateResult(None, "AI คืนภาพที่ว่างเปล่า")
