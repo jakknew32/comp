@@ -212,9 +212,48 @@ def test_cloudflare_unwraps_base64_from_json(monkeypatch) -> None:
 
     assert image.shape[0] == 64
     assert "acct-1" in captured["url"]
-    assert "FLUX.1-schnell" in captured["url"]
+    assert "flux-1-schnell" in captured["url"]
     assert captured["auth"] == "Bearer tok"
     assert captured["body"]["prompt"] == "แมว"
+    # ชื่อพารามิเตอร์ต้องเป็น steps ไม่ใช่ num_steps ตามที่ Cloudflare กำหนด
+    assert captured["body"]["steps"] == 4
+    assert "num_steps" not in captured["body"]
+    assert isinstance(captured["body"]["seed"], int)
+
+
+def test_cloudflare_truncates_overlong_prompt(monkeypatch) -> None:
+    """คำสั่งยาวเกิน 2048 ตัว Cloudflare จะปฏิเสธ ต้องย่อให้สั้นก่อนส่ง"""
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        payload = {"result": {"image": base64.b64encode(png_bytes()).decode("ascii")}}
+        return FakeResponse(json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setattr(freebies.urllib.request, "urlopen", fake_urlopen)
+    settings = load_settings({"CF_API_TOKEN": "tok", "CF_ACCOUNT_ID": "acct-1"})
+    freebies.generate_with_cloudflare("ย" * 5000, settings)
+
+    assert len(captured["body"]["prompt"]) == freebies.CF_MAX_PROMPT
+
+
+def test_cloudflare_decodes_jpeg(monkeypatch) -> None:
+    """Cloudflare คืนภาพ JPEG ไม่ใช่ PNG ต้องถอดได้เหมือนกัน"""
+    gray = np.full((48, 48), 200, np.uint8)
+    ok, buffer = cv2.imencode(".jpg", gray)
+    assert ok
+
+    payload = {"result": {"image": base64.b64encode(buffer.tobytes()).decode("ascii")}}
+    monkeypatch.setattr(
+        freebies.urllib.request,
+        "urlopen",
+        lambda *_a, **_k: FakeResponse(json.dumps(payload).encode("utf-8")),
+    )
+    settings = load_settings({"CF_API_TOKEN": "tok", "CF_ACCOUNT_ID": "acct-1"})
+    image = freebies.generate_with_cloudflare("แมว", settings)
+
+    assert image.shape[0] == 48
+    assert image.ndim == 3, "ต้องแปลงเป็นภาพสี ไม่ใช่ภาพเทา"
 
 
 def test_cloudflare_reports_api_errors_in_payload(monkeypatch) -> None:

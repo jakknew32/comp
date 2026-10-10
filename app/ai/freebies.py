@@ -169,8 +169,16 @@ def _request_pollinations(
 
 # --- Cloudflare Workers AI ----------------------------------------------------
 
-DEFAULT_CF_IMAGE_MODEL = "@cf/black-forest-labs/FLUX.1-schnell"
+DEFAULT_CF_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 CF_API_BASE = "https://api.cloudflare.com/client/v4"
+
+# ความยาวคำสั่งสูงสุดที่ Cloudflare รับได้ ต้องย่อให้สั้นก่อนส่ง
+# คำสั่งที่ยาวเกินนี้จะโดนปฏิเสธทั้งที่ผู้ใช้พิมพ์มาไม่เกิน 600 ตัว
+CF_MAX_PROMPT = 2048
+
+# FLUX.1-schnell เป็นโมเดลก้าวเร็ว ค่าเริ่มต้นคือ 4 และไม่เกิน 8
+# ยิ่งก้าวน้อยยิ่งกินโควตาฟรีน้อย จึงใช้ค่าต่ำสุดที่ยังได้ภาพใช้ได้
+CF_STEPS = 4
 
 
 def generate_with_cloudflare(
@@ -181,6 +189,10 @@ def generate_with_cloudflare(
 
     ต้องมี CF_API_TOKEN และ CF_ACCOUNT_ID ของบัญชี Cloudflare ที่สมัครฟรี
     โควตาฟรี 10,000 neurons ต่อวัน รีเซ็ตตีน 00:00 UTC
+
+    ราคาประมาณ 9.6 neurons ต่อก้าว + 4.8 ต่อ tile 512x512
+    ภาพ 1024x1024 ที่ 4 ก้าว กินราว 75 neurons ต่อภาพ
+    คิดเป็นเกือบ 130 ภาพต่อวันที่โควตาฟรี ซึ่งมากกว่าเว็บนี้มาก
     """
     if not settings.cf_token or not settings.cf_account_id:
         raise AiError(
@@ -191,8 +203,12 @@ def generate_with_cloudflare(
     model = settings.cf_model or DEFAULT_CF_IMAGE_MODEL
     url = f"{CF_API_BASE}/accounts/{settings.cf_account_id}/ai/run/{model}"
 
-    # FLUX.1-schnell เป็นโมเดลแบบก้าวเร็ว จำนวนก้าวต้องน้อย ไม่งั้นกินโควตาฟรีเร็ว
-    body = {"prompt": prompt, "num_steps": 4}
+    body = {
+        "prompt": prompt[:CF_MAX_PROMPT],
+        "steps": CF_STEPS,
+        # ส่ง seed ให้ด้วย ภาพจะออกมาต่างกันทุกครั้งที่ผู้ใช้กด
+        "seed": settings.seed_base % 2_147_483_647,
+    }
 
     request = urllib.request.Request(
         url,

@@ -42,7 +42,7 @@ DEFAULT_TIMEOUT = 90.0
 # ผู้ให้บริการฟรีที่ใช้เป็นตัวสำรอง ไม่ผูกกับเครดิตรายเดือนของผู้ใช้รายคน
 DEFAULT_POLLINATIONS_BASE_URL = "https://image.pollinations.ai"
 DEFAULT_POLLINATIONS_MODEL = "turbo"
-DEFAULT_CF_IMAGE_MODEL = "@cf/black-forest-labs/FLUX.1-schnell"
+DEFAULT_CF_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 
 # ประมาณการค่าใช้จ่ายต่อหนึ่งภาพ ใช้แสดงในหน้าเว็บให้ผู้ใช้ตัดสินใจ
 # ตัวเลขนี้มาจากหน้าราคาของ Google/Hugging Face ณ เวลาที่เขียนโค้ด และอาจเปลี่ยนได้

@@ -147,9 +147,13 @@ OpenCV ทำได้แค่กรองภาพ ไม่สามารถ
 | ตัวแปร | ค่า |
 |---|---|
 | `AI_PROVIDER` | `cloudflare` |
-| `CF_API_TOKEN` | โทเคนของคุณ |
-| `CF_ACCOUNT_ID` | Account ID |
-| `CF_IMAGE_MODEL` | `@cf/black-forest-labs/FLUX.1-schnell` (ค่าเริ่มต้น) |
+| `CF_API_TOKEN` | โทเคนของคุณ (สร้างที่ dash.cloudflare.com/profile/api-tokens) |
+| `CF_ACCOUNT_ID` | Account ID ของคุณ |
+| `CF_IMAGE_MODEL` | `@cf/black-forest-labs/flux-1-schnell` (ค่าเริ่มต้น) |
+
+โควตาฟรี 10,000 neurons/วัน FLUX.1-schnell กินราว **75 neurons ต่อภาพ** (4 ก้าว + tile 1024x1024)
+นั่นคือได้ฟรี **~130 ภาพต่อวัน** มากกว่าที่เว็บนี้ใช้แน่นอน
+ดูโควตาที่เหลือได้ที่ [dash.cloudflare.com](https://dash.cloudflare.com/?to=/:account/ai/workers-ai)
 
 > ข้อจำกัดของสองเจ้านี้: รับได้เฉพาะ **ข้อความ** ทำภาพใหม่จากคำบรรยายได้เท่านั้น
 > ฟีเจอร์ "แปลงภาพถ่ายเป็นลายเส้นด้วย AI" ยังต้องใช้ Gemini หรือ Hugging Face เหมือนเดิม
