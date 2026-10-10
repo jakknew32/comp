@@ -25,7 +25,9 @@ DEFAULT_HF_MODEL = "lineart_sd15"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 # Hugging Face ย้ายเข้าร้านค้า unified และปิด api-inference.huggingface.co ไปแล้ว
 # ตัวเก่าไม่มี DNS อีกต่อไป ต้องใช้ router.huggingface.co แทน
-DEFAULT_HF_BASE_URL = "https://router.huggingface.co"
+# และต้องมี path /hf-inference/models ต่อท้ายด้วย
+# ถ้าตัด path นี้ออก จะได้ 404 "model not found" ทั้งที่โมเดลมีอยู่จริง
+DEFAULT_HF_BASE_URL = "https://router.huggingface.co/hf-inference/models"
 DEFAULT_TIMEOUT = 90.0
 
 # ประมาณการค่าใช้จ่ายต่อหนึ่งภาพ ใช้แสดงในหน้าเว็บให้ผู้ใช้ตัดสินใจ

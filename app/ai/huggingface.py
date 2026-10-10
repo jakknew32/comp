@@ -23,19 +23,44 @@ from .gemini import describe_connection_error
 from .settings import AiSettings
 
 # ปลายทางมาจาก settings.hf_base_url เสมอ เพื่อให้เปลี่ยนได้ด้วย AI_HF_BASE_URL
-# ค่าเริ่มต้นคือ router.huggingface.co เพราะ api-inference.huggingface.co
-# ถูกปิดแล้วและไม่มี DNS อีกต่อไป
-DEFAULT_HF_BASE_URL = "https://router.huggingface.co"
+# ค่าเริ่มต้นคือ router.huggingface.co/hf-inference/models
+# เพราะ api-inference.huggingface.co ถูกปิดแล้วและไม่มี DNS อีกต่อไป
+# และ router ต้องมี path /hf-inference/models ต่อท้าย ไม่งั้นได้ 404
 
-# ชื่อย่อในหน้าเว็บ → ชื่อโมเดลจริงบน Hugging Face
-HF_MODELS = {
+# --- โมเดลสองกลุ่ม ห้ามใช้สลับกัน ---
+#
+# ControlNet รับ "ภาพนำ" ไม่ใช่ข้อความ จึงใช้ได้เฉพาะการแปลงภาพถ่ายเป็นลายเส้น
+# ใช้สร้างภาพจากข้อความไม่ได้ เพราะไม่มี text encoder สำหรับสร้างภาพใหม่
+# โมเดลในกลุ่มนี้จึงไม่มี tag text-to-image และ router จะตอบ 404 เมือเรียกผ่าน
+# เดิมโค้ดใช้โมเดล ControlNet สำหรับสร้างภาพด้วย จึงล้มเหลวเสมอ
+HF_CONTROLNET_MODELS = {
     "lineart_sd15": "lllyasviel/control_v11p_sd15_lineart",
     "canny_sd15": "lllyasviel/control_v11p_sd15_canny",
     "lineart_sd21": "xinsir/controlnet-lineart-sd21",
     "depth_sd15": "lllyasviel/control_v11f1p_sd15_depth",
 }
 
+# text-to-image จริง ใช้สร้างภาพจากข้อความได้
+HF_TEXT2IMAGE_MODELS = {
+    "flux_schnell": "black-forest-labs/FLUX.1-schnell",
+    "sdxl_base": "stabilityai/stable-diffusion-xl-base-1.0",
+    "sd_turbo": "stabilityai/sd-turbo",
+    "sdxl_turbo": "stabilityai/sdxl-turbo",
+}
+
+# ชื่อย่อเดิมที่หน้าเว็บอาจยังส่งมา ต้องแปลงเป็นโมเดล text-to-image ให้ถูกชนิด
+HF_MODEL_ALIASES = {
+    "lineart_sd15": "flux_schnell",
+    "canny_sd15": "flux_schnell",
+    "lineart_sd21": "flux_schnell",
+    "depth_sd15": "flux_schnell",
+    "default": "flux_schnell",
+}
+
 DEFAULT_HF_MODEL = "lineart_sd15"
+
+# ชื่อย่อสำหรับสร้างภาพจากข้อความ
+DEFAULT_HF_TEXT2IMAGE = "flux_schnell"
 
 DEFAULT_NEGATIVE_PROMPT = (
     "color, shading, shadow, gradient, texture, noise, blur, "
@@ -135,7 +160,9 @@ def hf_convert_to_lineart(
     if not token:
         raise HfError(settings.describe_missing())
 
-    model_id = HF_MODELS.get(model_key, HF_MODELS[DEFAULT_HF_MODEL])
+    model_id = HF_CONTROLNET_MODELS.get(
+        model_key, HF_CONTROLNET_MODELS[DEFAULT_HF_MODEL]
+    )
     # endpoint เดิมถูกปิดไปแล้ว ใช้ค่าจาก settings เพื่อให้เปลี่ยนปลายทางได้
     # โดยไม่ต้องแก้โค้ด และไม่ให้ไปชนกับค่าของผู้ให้บริการอื่น
     url = f"{settings.hf_base_url}/{model_id}"

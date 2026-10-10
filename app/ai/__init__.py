@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..lineart import detect
-from . import gemini, generate, huggingface
+from . import gemini, generate, huggingface  # noqa: F401 - generate ใช้ re-export ผ่านแพ็กเกจนี้
 from .gemini import AiError
 from .generate import (
     GenerateResult,

@@ -24,6 +24,7 @@ from .gemini import (
     _read_http_error,
     describe_connection_error,
 )
+from . import huggingface
 from .settings import AiProvider, AiSettings
 
 # สไตล์สำเร็จรูป แต่ละสไตล์คือคำสั่งเสริมที่แปะต่อท้ายคำบรรยายของผู้ใช้
@@ -160,9 +161,19 @@ def generate_with_huggingface(
             "guidance_scale": 7.5,
         },
     }
-    # endpoint เดิม api-inference.huggingface.co ถูกปิดแล้ว ไม่มี DNS
-    # ใช้ router.huggingface.co ที่อ่านจาก settings เพื่อให้เปลี่ยนได้จาก env
-    url = f"{settings.hf_base_url}/{settings.hf_model}"
+    # hf_model ที่หน้าเว็บส่งมาเป็นชื่อย่อ ไม่ใช่ชื่อโมเดลจริง
+    # และค่าเริ่มต้นเดิมเป็นชื่อย่อของ ControlNet ซึ่งสร้างภาพจากข้อความไม่ได้
+    # จึงต้องแปลงเป็นชื่อย่อของ text-to-image ก่อน แล้วค่อยแปลงเป็นชื่อโมเดลจริง
+    key = huggingface.HF_MODEL_ALIASES.get(
+        settings.hf_model, settings.hf_model
+    )
+    model_id = huggingface.HF_TEXT2IMAGE_MODELS.get(key, key)
+    if "/" not in model_id:
+        # ยังเป็นชื่อย่อที่ไม่รู้จัก ใช้ค่าเริ่มต้นแทนเพื่อไม่ให้ยิงไป 404
+        model_id = huggingface.HF_TEXT2IMAGE_MODELS[
+            huggingface.DEFAULT_HF_TEXT2IMAGE
+        ]
+    url = f"{settings.hf_base_url}/{model_id}"
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),

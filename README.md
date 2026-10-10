@@ -139,11 +139,37 @@ OpenCV ทำได้แค่กรองภาพ ไม่สามารถ
 |---|---|
 | `AI_PROVIDER` | `huggingface` |
 | `HF_TOKEN` | โทเคนของคุณ |
-| `AI_HF_MODEL` | `lineart_sd15` (ชื่อย่อในหน้าเว็บ เช่น `canny_sd15`, `depth_sd15`) |
-| `AI_HF_BASE_URL` | `https://router.huggingface.co` |
+| `AI_HF_MODEL` | ดูรายชื่อด้านล่าง |
+| `AI_HF_BASE_URL` | `https://router.huggingface.co/hf-inference/models` |
 
-หมายเหตุ: ปลายทางเดิม `api-inference.huggingface.co` ถูกปิดไปแล้วและไม่มี DNS
-ต้องใช้ `router.huggingface.co` ค่านี้ถูกตั้งเป็นค่าเริ่มต้นให้แล้ว
+โมเดลใน `AI_HF_MODEL` แยกเป็น 2 กลุ่มเพราะใช้งานต่างกัน ห้ามสลับกัน
+
+**สร้างภาพจากข้อความ** (text-to-image) ใช้ชื่อย่อเหล่านี้
+
+| ชื่อย่อ | โมเดลจริง |
+|---|---|
+| `flux_schnell` | `black-forest-labs/FLUX.1-schnell` (ค่าเริ่มต้น เร็วและไม่มีโควตา) |
+| `sdxl_base` | `stabilityai/stable-diffusion-xl-base-1.0` |
+| `sd_turbo` | `stabilityai/sd-turbo` |
+| `sdxl_turbo` | `stabilityai/sdxl-turbo` |
+
+**แปลงภาพถ่ายเป็นลายเส้น** (ControlNet) ใช้ชื่อย่อเหล่านี้
+
+| ชื่อย่อ | โมเดลจริง |
+|---|---|
+| `lineart_sd15` | `lllyasviel/control_v11p_sd15_lineart` (ค่าเริ่มต้น) |
+| `canny_sd15` | `lllyasviel/control_v11p_sd15_canny` |
+| `lineart_sd21` | `xinsir/controlnet-lineart-sd21` |
+| `depth_sd15` | `lllyasviel/control_v11f1p_sd15_depth` |
+
+ControlNet รับภาพนำ ไม่รับข้อความ จึงใช้สร้างภาพจากข้อความไม่ได้
+โปรแกรมแปลงชื่อย่อให้ถูกกลุ่มให้อัตโนมัติ ถ้าตั้งผิดกลุ่มก็ยังทำงานได้
+
+หมายเหตุเรื่องปลายทาง ปลายทางเดิม `api-inference.huggingface.co` ถูกปิดไปแล้วและไม่มี DNS
+ต้องใช้ `router.huggingface.co` และต้องมี path `/hf-inference/models` ต่อท้ายด้วย
+ถ้าตัด path ทิ้งจะได้ข้อความว่า "ไม่พบโมเดลที่ระบุ" แม้ตั้งค่าถูกต้องทุกอย่าง
+
+โมเดลบางตัวอาจต้องขอโควตา (เรียกฟรีแต่รอคิวนาน) ถ้าได้ 403 หรือ 429 ให้เปลี่ยนไปใช้ `flux_schnell`
 
 ตรวจสถานะได้ที่ `GET /api/health` จะคืน `ai.configured: true/false`
 
