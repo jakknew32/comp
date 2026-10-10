@@ -137,16 +137,15 @@ def _request_pollinations(
             raw = response.read()
     except urllib.error.HTTPError as exc:
         detail = _read_error_body(exc)
-        if exc.code == 429:
-            # ถ้าไม่มีโทเคน การรอแล้วลองใหม่มีโอกาสสำเร็จ จึงส่งสัญญาณให้ชั้นบนจัดการ
+        if exc.code in (429, 402):
+            # Pollinations ใช้ 402 ตอนโควตารายวินาทีหมด ไม่ใช่เรื่องเครดิตเงินจริง
+            # ตัวที่ไม่มีโทเคนจะโดนบ่อยกว่า และการรอแล้วลองใหม่ก็มีโอกาสสำเร็จ
             if not settings.pollinations_token:
                 raise _RateLimited() from exc
             raise AiError(
                 "Pollinations เรียกถี่เกินลิมิต "
                 "(โทเคนนี้ได้ 1 คำขอต่อ 5 วินาที) — กรุณารอสักครู่แล้วลองใหม่"
             ) from exc
-        if exc.code == 402:
-            raise AiError("เครดิต Pollinations หมด") from exc
         if exc.code in (401, 403):
             raise AiError("POLLINATIONS_TOKEN ไม่ถูกต้องหรือหมดอายุ") from exc
         raise AiError(
@@ -203,11 +202,13 @@ def generate_with_cloudflare(
     model = settings.cf_model or DEFAULT_CF_IMAGE_MODEL
     url = f"{CF_API_BASE}/accounts/{settings.cf_account_id}/ai/run/{model}"
 
+    # ส่งได้เฉพาะ prompt กับ steps เท่านั้น
+    # schema ของ Cloudflare ตั้ง additionalProperties เป็น false
+    # การส่ง seed หรือ field อื่นจะโดนปฏิเสธด้วย 400 ทันที
+    # ตัวอย่างในเอกสารที่มี seed เป็นตัวอย่างสำหรับ Workers binding ไม่ใช่ REST API
     body = {
         "prompt": prompt[:CF_MAX_PROMPT],
         "steps": CF_STEPS,
-        # ส่ง seed ให้ด้วย ภาพจะออกมาต่างกันทุกครั้งที่ผู้ใช้กด
-        "seed": settings.seed_base % 2_147_483_647,
     }
 
     request = urllib.request.Request(

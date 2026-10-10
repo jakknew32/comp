@@ -134,6 +134,28 @@ def test_pollinations_waits_once_and_retries_on_rate_limit(monkeypatch) -> None:
     assert slept and slept[0] >= 10
 
 
+def test_pollinations_treats_402_as_rate_limit(monkeypatch) -> None:
+    """Pollinations ใช้ 402 แทน 429 ตอนโควตารายวินาทีหมด
+
+    ถ้าไปแปลว่าเครดิตเงินหมด ข้อความจะชี้ทางแก้ผิดวิธี
+    """
+    attempts = {"n": 0}
+
+    def fake_urlopen(_request, timeout=None):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise freebies.urllib.error.HTTPError(
+                "https://image.pollinations.ai", 402, "quota", {}, None
+            )
+        return FakeResponse(png_bytes())
+
+    monkeypatch.setattr(freebies.urllib.request, "urlopen", fake_urlopen)
+    image = freebies.generate_with_pollinations("แมว", load_settings({}))
+
+    assert image.shape[0] == 64
+    assert attempts["n"] == 2, "ต้องรอแล้วลองใหม่ ไม่ใช่บอกว่าเครดิตเงินหมด"
+
+
 def test_pollinations_gives_up_after_retry(monkeypatch) -> None:
     def fake_urlopen(_request, timeout=None):
         raise freebies.urllib.error.HTTPError(
@@ -220,7 +242,27 @@ def test_cloudflare_unwraps_base64_from_json(monkeypatch) -> None:
     # ชื่อพารามิเตอร์ต้องเป็น steps ไม่ใช่ num_steps ตามที่ Cloudflare กำหนด
     assert captured["body"]["steps"] == 4
     assert "num_steps" not in captured["body"]
-    assert isinstance(captured["body"]["seed"], int)
+
+
+def test_cloudflare_sends_only_fields_it_accepts(monkeypatch) -> None:
+    """schema ของ Cloudflare ปิด additionalProperties
+
+    การส่ง field อื่น เช่น seed จะโดนปฏิเสธด้วย 400 ทันที
+    ตัวอย่างในเอกสารที่มี seed เป็นของ Workers binding ไม่ใช่ REST API
+    """
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        payload = {"result": {"image": base64.b64encode(png_bytes()).decode("ascii")}}
+        return FakeResponse(json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setattr(freebies.urllib.request, "urlopen", fake_urlopen)
+    settings = load_settings({"CF_API_TOKEN": "tok", "CF_ACCOUNT_ID": "acct-1"})
+    freebies.generate_with_cloudflare("แมว", settings)
+
+    allowed = {"prompt", "steps"}
+    assert set(captured["body"]) <= allowed, f"ส่ง field เกิน: {set(captured['body']) - allowed}"
 
 
 def test_cloudflare_truncates_overlong_prompt(monkeypatch) -> None:
