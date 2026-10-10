@@ -69,14 +69,15 @@ POLLINATIONS_ANON_COOLDOWN = 16.0
 # --- Pollinations -------------------------------------------------------------
 
 # โมเดลของ Pollinations ที่ใช้ได้จริง ณ เวลานี้
-# flux  คุณภาพดีที่สุด แต่ช้า
-# turbo เร็วกว่ามาก เหมาะกับเว็บที่คนกดรัว
+# flux  คุณภาพดีกว่ามาก และทำตามคำสั่งได้แม่นกว่า
+# turbo เร็วกว่ามาก แต่มักไม่ทำตามคำสั่ง วาดมีสีและไม่ใช่ภาพเส้น
+# เว็บนี้ต้องการภาพเส้นสำหรับระบายสี คุณภาพสำคัญกว่าความเร็ว จึงใช้ flux
 POLLINATIONS_MODELS = {
     "flux": "flux",
     "turbo": "turbo",
     "kontext": "kontext",
 }
-DEFAULT_POLLINATIONS_MODEL = "turbo"
+DEFAULT_POLLINATIONS_MODEL = "flux"
 
 # ขนาดภาพที่ขอ ต้องเป็นเลขหารลงตัว ของ Pollinations บังคับให้เป็น 8 คูณ
 POLLINATIONS_WIDTH = 1024

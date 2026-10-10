@@ -93,6 +93,61 @@ BASE_PROMPT_TH = (
     "ห้ามมีตัวหนังสือหรือลายน้ำในภาพ"
 )
 
+# --- คำสั่งภาษาอังกฤษ สำหรับโมเดลที่อ่านไทยไม่ออก ------------------------------
+#
+# FLUX, Stable Diffusion และ SDXL ถูกฝึกด้วยภาษาอังกฤษเกือบทั้งหมด
+# ถ้าส่งคำสั่งภาษาไทยไป โมเดลจะอ่านไม่ออกแล้ววาดอะไรก็ได้ที่สุ่มได้
+# ไม่ตรงกับที่ผู้ใช้พิมพ์มาเลย จึงต้องมีคำสั่งอังกฤษแยกสำหรับเจ้าเหล่านี้
+#
+# ข้อจำกัดที่ต้องบอกผู้ใช้: ส่วนคำบรรยายของผู้ใช้ยังเป็นภาษาไทยอยู่
+# โมเดลจะอ่านได้แค่คำสั่งควบคุมรูปแบบภาพที่เป็นภาษาอังกฤษ
+# จึงได้ภาพระบายสีที่รูปแบบถูก แต่เนื้อหาอาจยังไม่ตรงคำบรรยาย
+#
+# ทางแก้ที่ดีที่สุดคือแนะนำผู้ใช้ให้พิมพ์คำบรรยายเป็นภาษาอังกฤษ
+# หรือใช้ Gemini ซึ่งเข้าใจภาษาไทยได้มากกว่า
+
+STYLE_PRESETS_EN: dict[str, str] = {
+    "kids_easy": (
+        "for toddlers, very thick bold clean outlines, few large simple shapes, "
+        "generous blank areas to colour in, no tiny details"
+    ),
+    "classic": (
+        "medium thickness outlines, moderate detail, "
+        "main subject clearly defined, suitable for primary school children"
+    ),
+    "detailed": (
+        "intricate detailed line art in the style of an adult colouring book, "
+        "many distinct enclosed regions to fill in, "
+        "lines never overlapping into a mess"
+    ),
+    "kawaii": (
+        "cute kawaii cartoon style, character with a big head and big round eyes, "
+        "happy cheerful mood, soft rounded curves"
+    ),
+    "mandala": (
+        "circular mandala pattern, symmetrical around the centre, "
+        "repeating concentric layers, beautiful and pleasing to colour in"
+    ),
+    "scene": (
+        "wide scene with a simple background, characters and several objects, "
+        "tells a story, slight depth, not too complex to colour in"
+    ),
+}
+
+BASE_PROMPT_EN = (
+    "black and white coloring book line art of {text}. {extra}. "
+    "crisp black outlines on pure white background, all shapes fully closed. "
+    "no color, no shading, no gradients, no gray tones, no background patterns, "
+    "no text, no watermark, no signature. "
+    "clean simple shapes suitable for children to colour in with crayons"
+)
+
+# โมเดลที่ฝึกด้วยภาษาอังกฤษ ต้องได้คำสั่งภาษาอังกฤษ
+# เจ้าพวกนี้ถ้าได้คำสั่งไทยจะวาดอะไรก็ได้ที่สุ่มได้
+ENGLISH_ONLY_PROVIDERS = frozenset(
+    {AiProvider.CLOUDFLARE, AiProvider.POLLINATIONS, AiProvider.HUGGINGFACE}
+)
+
 
 def list_styles() -> list[dict[str, str]]:
     """รายการสไตล์สำหรับหน้าเว็บ"""
@@ -102,9 +157,23 @@ def list_styles() -> list[dict[str, str]]:
     ]
 
 
-def build_prompt(text: str, style_key: str | None) -> str:
-    """ประกอบคำสั่งเต็มจากคำบรรยายผู้ใช้กับสไตล์ที่เลือก"""
-    preset = STYLE_PRESETS.get(style_key or "", STYLE_PRESETS[DEFAULT_STYLE])
+def build_prompt(
+    text: str,
+    style_key: str | None,
+    provider: AiProvider | None = None,
+) -> str:
+    """ประกอบคำสั่งเต็มจากคำบรรยายผู้ใช้กับสไตล์ที่เลือก
+
+    ต้องเลือกภาษาของคำสั่งตามเจ้าที่จะเรียก
+    ถ้าใช้คำสั่งไทยกับ FLUX หรือ Stable Diffusion ผลลัพธ์จะไม่ตรงคำบรรยายเลย
+    """
+    key = style_key if style_key in STYLE_PRESETS else DEFAULT_STYLE
+
+    if provider is not None and provider in ENGLISH_ONLY_PROVIDERS:
+        extra = STYLE_PRESETS_EN[key]
+        return BASE_PROMPT_EN.format(text=text.strip(), extra=extra)
+
+    preset = STYLE_PRESETS[key]
     return BASE_PROMPT_TH.format(text=text.strip(), extra=preset["extra"])
 
 
@@ -335,7 +404,6 @@ def generate_image(
     if not chain:
         return GenerateResult(None, settings.describe_missing() or NO_PROVIDER_READY_MESSAGE)
 
-    prompt = build_prompt(text, style_key)
     problems: list[str] = []
 
     # สุ่มใหม่ทุกครั้งที่ผู้ใช้กด ถ้าใช้ค่าเดิมทุกครั้งจะได้ภาพเดิมเป๊ะ ๆ
@@ -344,6 +412,10 @@ def generate_image(
 
     for index, current in enumerate(chain):
         call_settings = _settings_for(settings, current, model, base_seed + index)
+        # ต้องประกอบคำสั่งใหม่ในแต่ละรอบ เพราะภาษาของคำสั่งขึ้นกับเจ้าที่ถูกเรียก
+        # FLUX กับ Stable Diffusion อ่านไทยไม่ออก ต้องได้คำสั่งอังกฤษ
+        # ถ้าส่งคำสั่งเดียวกันไปทุกเจ้า เจ้าที่อ่านไทยไม่ออกจะวาดมั่ว
+        prompt = build_prompt(text, style_key, current)
         try:
             image = _resolve(current)(prompt, call_settings)
         except AiError as exc:
@@ -370,10 +442,31 @@ def generate_image(
             problems.append(f"{current.value}: AI คืนภาพที่ว่างเปล่า")
             continue
 
-        return GenerateResult(image, provider=current.value)
+        return GenerateResult(image, provider=current.value, note=_lang_hint(text, current))
 
     detail = " | ".join(problems) if problems else "ไม่ทราบสาเหตุ"
     return GenerateResult(None, f"สร้างภาพไม่สำเร็จ: {detail}")
+
+
+def _has_thai(text: str) -> bool:
+    """ข้อความนี้มีตัวไทยอยู่ไหม"""
+    return any("฀" <= ch <= "๿" for ch in text)
+
+
+def _lang_hint(text: str, provider: AiProvider) -> str | None:
+    """เตือนผู้ใช้เมื่อใช้ภาษาที่โมเดลอ่านไม่ออก
+
+    ไม่ใช่ error ภาพยังได้ แต่คำบรรยายภาษาไทยจะไม่ถูกนำไปวาด
+    ผู้ใช้ต้องรู้ ไม่งั้นจะคิดว่าโปรแกรมมีบั๊กแล้วลองซ้ำไปเรื่อย ๆ
+    """
+    if provider not in ENGLISH_ONLY_PROVIDERS:
+        return None
+    if not _has_thai(text):
+        return None
+    return (
+        "หมายเหตุ: โมเดลนี้เข้าใจภาษาอังกฤษเท่านั้น "
+        "ถ้าได้ภาพไม่ตรงกับที่พิมพ์ ให้ลองพิมพ์คำบรรยายเป็นภาษาอังกฤษ"
+    )
 
 
 def _settings_for(

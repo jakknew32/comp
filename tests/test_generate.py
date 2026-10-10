@@ -180,7 +180,82 @@ def test_generate_uses_huggingface_when_chosen(monkeypatch) -> None:
     monkeypatch.setattr(generate, "generate_with_huggingface", fake_hf)
     result = generate.generate_image("แมว", None, settings, provider="huggingface")
     assert result.ok is True
-    assert called["prompt"].startswith("วาดภาพระบายสี")
+    # Hugging Face ใช้ FLUX ซึ่งอ่านไทยไม่ออก ต้องได้คำสั่งอังกฤษ
+    assert called["prompt"].startswith("black and white coloring book line art")
+
+
+# --- ภาษาของคำสั่งต้องตรงกับโมเดล -------------------------------------------
+
+
+def test_english_only_models_get_english_prompt() -> None:
+    """FLUX และ Stable Diffusion อ่านไทยไม่ออก ต้องได้คำสั่งอังกฤษ
+
+    ถ้าส่งคำสั่งไทยไป ผลลัพธ์จะไม่ตรงคำบรรยายของผู้ใช้เลย
+    """
+    for provider in (
+        AiProvider.CLOUDFLARE,
+        AiProvider.POLLINATIONS,
+        AiProvider.HUGGINGFACE,
+    ):
+        prompt = generate.build_prompt("แมวใส่หมวก", "kawaii", provider)
+        # ส่วนที่บังคับรูปแบบภาพต้องเป็นอังกฤษ
+        # ส่วนคำบรรยายของผู้ใช้ยังเป็นไทยได้ เพราะแปลงให้ผู้ใช้เองไม่ได้
+        assert "coloring book" in prompt
+        assert "วาดภาพระบายสี" not in prompt, f"{provider.value} ยังมีคำสั่งไทย"
+        assert generate._has_thai(prompt), "คำบรรยายไทยของผู้ใช้ต้องยังอยู่"
+
+
+def test_gemini_gets_thai_prompt() -> None:
+    """Gemini เข้าใจไทยได้ ต้องได้คำสั่งภาษาไทยเพื่อความแม่นยำ"""
+    prompt = generate.build_prompt("แมวใส่หมวก", "kawaii", AiProvider.GEMINI)
+    assert generate._has_thai(prompt)
+    assert "วาดภาพระบายสี" in prompt
+
+
+def test_prompt_language_follows_the_provider_actually_used(monkeypatch) -> None:
+    """คำสั่งต้องถูกประกอบใหม่ตามเจ้าที่เรียกจริง ไม่ใช่ครั้งเดียวตอนต้น
+
+    ถ้าประกอบครั้งเดียวแล้วใช้ทุกเจ้า เจ้าที่อ่านไทยไม่ออกจะได้คำสั่งผิดภาษา
+    """
+    settings = load_settings({ENV_API_KEY: "k"})
+    seen: list[str] = []
+
+    def fake_gemini(prompt, _settings):
+        seen.append(prompt)
+        return sample_image()
+
+    monkeypatch.setattr(generate, "generate_with_gemini", fake_gemini)
+    generate.generate_image("แมว", None, settings, provider="gemini")
+
+    assert len(seen) == 1
+    assert generate._has_thai(seen[0]), "ต้องได้คำสั่งไทยเพราะเรียก Gemini จริง"
+
+
+def test_user_is_warned_when_using_thai_with_english_model(monkeypatch) -> None:
+    """พิมพ์ไทยแต่โมเดลอ่านไม่ออก ต้องเตือน ไม่ใช่ให้ผู้ใช้คิดว่าโปรแกรมเพี้ยน"""
+    settings = load_settings({"CF_API_TOKEN": "t", "CF_ACCOUNT_ID": "a"})
+    monkeypatch.setattr(
+        generate.freebies,
+        "generate_with_cloudflare",
+        lambda *_a, **_k: sample_image(),
+    )
+    result = generate.generate_image("แมวใส่หมวก", None, settings)
+
+    assert result.ok is True
+    assert result.note and "ภาษาอังกฤษ" in result.note
+
+
+def test_no_warning_when_prompt_is_already_english(monkeypatch) -> None:
+    settings = load_settings({"CF_API_TOKEN": "t", "CF_ACCOUNT_ID": "a"})
+    monkeypatch.setattr(
+        generate.freebies,
+        "generate_with_cloudflare",
+        lambda *_a, **_k: sample_image(),
+    )
+    result = generate.generate_image("a cat wearing a hat", None, settings)
+
+    assert result.ok is True
+    assert result.note is None, "พิมพ์อังกฤษแล้วต้องไม่เตือน"
 
 
 def test_to_png_data_url_round_trips() -> None:

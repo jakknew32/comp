@@ -816,7 +816,13 @@ async def generate_images(payload: GeneratePayload) -> JSONResponse:
         )
         if outcome.ok:
             images.append(
-                {"data": generate_module.to_png_data_url(outcome.image), "name": prompt}
+                {
+                    "data": generate_module.to_png_data_url(outcome.image),
+                    "name": prompt,
+                    # ข้อความเตือน เช่น ภาษาที่โมเดลอ่านไม่ออก
+                    # ต้องส่งกลับไปด้วย ไม่ใช่ทิ้งไป ผู้ใช้จะได้รู้ว่าทำไมไม่ตรงใจ
+                    "note": outcome.note,
+                }
             )
         elif outcome.note:
             failed.append(outcome.note)

@@ -290,14 +290,25 @@ async function generateImages() {
       return;
     }
     const data = await response.json();
-    state.generated = (data.images || []).map((img) => ({ data: img.data, name: img.name }));
+    state.generated = (data.images || []).map((img) => ({
+      data: img.data,
+      name: img.name,
+      note: img.note || "",
+    }));
     renderGenerated();
     if (state.generated.length === 0) {
       setGenStatus("ไม่ได้ภาพกลับมา ลองอีกครั้ง", "error");
     } else {
       const extra = data.failed && data.failed.length
         ? " — ล้มเหลวบางส่วน: " + data.failed.join(" | ") : "";
-      setGenStatus("✨ ได้ภาพ " + state.generated.length + " ภาพ — เลือกแล้วกดเพิ่มลงในสมุด" + extra);
+      // คำเตือนจากเซิร์ฟเวอร์ เช่น โมเดลอ่านภาษาไทยไม่ออก
+      // ต้องโชว์ให้เห็นชัด มิฉะนั้นผู้ใช้จะคิดว่าโปรแกรมวาดมั่ว
+      const hints = [...new Set(state.generated.map((i) => i.note).filter(Boolean))];
+      const hintText = hints.length ? " — " + hints.join(" ") : "";
+      setGenStatus(
+        "✨ ได้ภาพ " + state.generated.length + " ภาพ — เลือกแล้วกดเพิ่มลงในสมุด" + extra + hintText,
+        hints.length ? "warn" : "ok",
+      );
     }
   } catch (_) {
     setGenStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ", "error");

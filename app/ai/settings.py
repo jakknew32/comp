@@ -41,7 +41,7 @@ DEFAULT_TIMEOUT = 90.0
 
 # ผู้ให้บริการฟรีที่ใช้เป็นตัวสำรอง ไม่ผูกกับเครดิตรายเดือนของผู้ใช้รายคน
 DEFAULT_POLLINATIONS_BASE_URL = "https://image.pollinations.ai"
-DEFAULT_POLLINATIONS_MODEL = "turbo"
+DEFAULT_POLLINATIONS_MODEL = "flux"
 DEFAULT_CF_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 
 # ประมาณการค่าใช้จ่ายต่อหนึ่งภาพ ใช้แสดงในหน้าเว็บให้ผู้ใช้ตัดสินใจ

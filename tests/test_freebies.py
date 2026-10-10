@@ -94,7 +94,17 @@ def test_pollinations_returns_decoded_image(monkeypatch) -> None:
 
     assert image.shape[0] == 64
     assert "แมว" in captured["url"] or "%E0" in captured["url"]
-    assert "model=turbo" in captured["url"]
+    # ต้องเริ่มด้วย flux เพราะ turbo มักไม่ทำตามคำสั่งและวาดมีสี
+    assert "model=flux" in captured["url"]
+
+
+def test_pollinations_defaults_to_quality_model() -> None:
+    """ค่าเริ่มต้นต้องเป็น flux
+
+    turbo เร็วกว่าแต่มักวาดมีสีและไม่ใช่ภาพเส้น ซึ่งใช้ระบายสีไม่ได้
+    """
+    assert load_settings({}).pollinations_model == "flux"
+    assert freebies.DEFAULT_POLLINATIONS_MODEL == "flux"
 
 
 def test_pollinations_sends_token_when_configured(monkeypatch) -> None:

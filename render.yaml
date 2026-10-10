@@ -26,7 +26,7 @@ services:
       - key: AI_PROVIDER
         value: cloudflare
       - key: POLLINATIONS_MODEL
-        value: turbo
+        value: flux
         sync: false
       - key: AI_MODEL
         value: gemini-3.1-flash-image-preview
