@@ -49,11 +49,18 @@ def block_network(monkeypatch):
 
 
 def test_no_key_means_not_configured() -> None:
+    """ไม่มีคีย์เจ้าหลัก แต่ยังใช้เจ้าฟรีได้ จึงยังถือว่าพร้อมใช้งาน
+
+    ต้องเช็คกับค่าที่ปิด fallback ด้วย ถึงจะเห็นว่าไม่มีเจ้าไหนเลย
+    """
     settings = load_settings({})
-    assert settings.configured is False
-    assert settings.model == DEFAULT_MODEL
-    assert settings.base_url == DEFAULT_BASE_URL
-    assert ENV_API_KEY in settings.describe_missing()
+    assert settings.configured is True, "ต้องมีทางออกฟรีเสมอ ไม่งั้นเว็บจะใช้ไม่ได้"
+
+    offline = load_settings({"AI_ALLOW_FALLBACK": "false"})
+    assert offline.configured is False
+    assert offline.model == DEFAULT_MODEL
+    assert offline.base_url == DEFAULT_BASE_URL
+    assert ENV_API_KEY in offline.describe_missing()
 
 
 def test_key_enables_ai() -> None:
@@ -63,7 +70,9 @@ def test_key_enables_ai() -> None:
 
 
 def test_blank_key_is_treated_as_absent() -> None:
-    assert load_settings({ENV_API_KEY: "   "}).configured is False
+    blank = load_settings({ENV_API_KEY: "   ", "AI_ALLOW_FALLBACK": "false"})
+    assert blank.api_key is None
+    assert blank.configured is False
 
 
 def test_model_and_url_are_overridable() -> None:
@@ -89,11 +98,21 @@ def test_masked_key_never_leaks_secret() -> None:
 
 
 def test_status_hides_cost_when_unconfigured() -> None:
-    data = ai.status(load_settings({}))
+    """ไม่มีเจ้าไหนพร้อมเลยจริง ๆ ต้องไม่โชว์ราคาและต้องบอกว่าตั้งค่าอะไร"""
+    data = ai.status(load_settings({"AI_ALLOW_FALLBACK": "false"}))
     assert data["configured"] is False
     assert data["model"] is None
     assert data["estimated_cost_per_image_usd"] is None
     assert data["message"]
+
+
+def test_status_reports_free_provider_when_no_key() -> None:
+    """ไม่มีคีย์เลยต้องโชว์ว่าใช้เจ้าฟรี ราคาเป็นศูนย์ ไม่ใช่โชว์ราคา Gemini"""
+    data = ai.status(load_settings({}))
+    assert data["configured"] is True
+    assert data["provider"] == "pollinations"
+    assert data["estimated_cost_per_image_usd"] == 0.0
+    assert "pollinations" in data["fallback_chain"]
 
 
 def test_status_reports_cost_when_configured() -> None:
@@ -121,6 +140,8 @@ def test_photo_is_sent_to_ai() -> None:
 def test_no_ai_when_disabled_or_unconfigured() -> None:
     photo = fixtures.synthetic_photo()
     assert ai.should_use_ai(photo, load_settings({ENV_API_KEY: "k"}), False) is False
+    # ไม่มีคีย์ของเจ้าที่รับภาพแนบ = ทำงานนี้ไม่ได้ ต้องไม่ยิง
+    # ต่อให้มี Pollinations ซึ่งรับได้แค่ข้อความก็ตาม
     assert ai.should_use_ai(photo, load_settings({}), True) is False
 
 

@@ -14,9 +14,28 @@ services:
     plan: free
     autoDeploy: true
     envVars:
-      # ฟีเจอร์ AI ปิดไว้โดยไม่ต้องใส่คีย์ก็ยังใช้โปรแกรมได้ครบ
-      # ถ้าต้องการเปิด ให��ใส่คีย์ของคุณใน Environment ของ Render
-      # โครงสร้างของไฟล์นี้อ้างอิงค่าได้ที่ค่า AI_* ใน README.md
+      # ฟีเจอร์ AI ใช้งานได้เลยโดยไม่ต้องใส่คีย์ เพราะมีผู้ให้บริการฟรีเป็นตัวสำรอง
+      # ถ้าตั้ง AI_PROVIDER ที่นี่ จะเป็นเจ้าหลักที่ระบบเรียกก่อนสุด
+      # ทุกค่า AI_* / HF_TOKEN / CF_* อธิบายไว้ที่ README.md
+      #
+      # ผู้ให้บริการที่ตั้งไว้จะถูกเรียกก่อนเสมอ ถ้าล้ม (เครดิตหมด โควตาหมด ล่ม)
+      # ระบบจะลองตามลำดับ: Pollinations → Cloudflare → Gemini → Hugging Face
+      # ตัวฟรีที่ทำงานได้เลยคือ Pollinations ไม่ต้องสมัคร
+
+      - key: AI_PROVIDER
+        value: pollinations
+      - key: POLLINATIONS_MODEL
+        value: turbo
+        sync: false
       - key: AI_MODEL
         value: gemini-3.1-flash-image-preview
         sync: false
+
+      # --- ถ้าอยากคุณภาพสูงขึ้น ใส่คีย์ของเจ้าใดเจ้าหนึ่งแล้วตั้ง AI_PROVIDER ให้ตรง ---
+      # Cloudflare Workers AI ฟรี 10,000 neurons/วัน (สมัคการ์ดฟรีที่ dash.cloudflare.com)
+      # - key: CF_API_TOKEN
+      # - key: CF_ACCOUNT_ID
+      # Gemini มีโควตาฟรีรายวันแต่เสี่ยงถูกจำกัด
+      # - key: AI_API_KEY
+      # Hugging Face ฟรีเฉพาะเครดิตรายเดือน ถ้าหมดจะข้ามไปเจ้าถัดไปเอง
+      # - key: HF_TOKEN

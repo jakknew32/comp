@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import secrets
 import urllib.error
 import urllib.request
 
@@ -25,8 +26,13 @@ from .gemini import (
     _read_http_error,
     describe_connection_error,
 )
-from . import huggingface
-from .settings import AiProvider, AiSettings
+from . import freebies, huggingface
+from .settings import (
+    FALLBACK_ORDER,
+    NO_PROVIDER_READY_MESSAGE,
+    AiProvider,
+    AiSettings,
+)
 
 logger = logging.getLogger("coloring_book.ai")
 
@@ -238,13 +244,70 @@ def generate_with_huggingface(
 class GenerateResult:
     """ผลการสร้างภาพ แยกสถานะสำเร็จกับล้มเหลวให้หน้าเว็บแสดงได้ชัด"""
 
-    def __init__(self, image: np.ndarray | None, note: str | None = None) -> None:
+    def __init__(
+        self,
+        image: np.ndarray | None,
+        note: str | None = None,
+        provider: str | None = None,
+    ) -> None:
         self.image = image
         self.note = note
+        # ผู้ให้บริการที่ใช้จริง อาจไม่ตรงกับที่ตั้งไว้ถ้าเกิดการสำรอง
+        self.provider = provider
 
     @property
     def ok(self) -> bool:
         return self.image is not None
+
+
+# จับคู่เจ้ากับชื่อฟังก์ชันของเจ้านั้น
+# ต้องอ้างชื่อฟังก์ชันเป็นข้อความ ไม่ใช่เก็บตัวฟังก์ชันไว้ตรง ๆ
+# เพราะการเก็บไว้ตรง ๆ จะทำให้เทสต์แทนที่ฟังก์ชันในโมดูลนี้ไม่ได้ผล
+_DISPATCH = {
+    AiProvider.GEMINI: "generate_with_gemini",
+    AiProvider.HUGGINGFACE: "generate_with_huggingface",
+    AiProvider.POLLINATIONS: "generate_with_pollinations",
+    AiProvider.CLOUDFLARE: "generate_with_cloudflare",
+}
+
+
+def _resolve(provider: AiProvider):
+    """หาฟังก์ชันของเจ้านั้น จากโมดูลนี้
+
+    ถ้าเจ้าใหม่ถูกเพิ่มใน settings แต่ลืมเพิ่มใน _DISPATCH
+    ให้หยุดตอน import แทนที่จะล้มตอนผู้ใช้กด
+    """
+    name = _DISPATCH.get(provider)
+    if name is None:
+        raise AiError(f"ยังไม่ได้เขียนส่วนเรียกผู้ให้บริการ {provider.value}")
+    if provider == AiProvider.POLLINATIONS:
+        return freebies.generate_with_pollinations
+    if provider == AiProvider.CLOUDFLARE:
+        return freebies.generate_with_cloudflare
+    return globals()[name]
+
+
+def provider_chain(
+    settings: AiSettings,
+    preferred: str | None = None,
+) -> list[AiProvider]:
+    """เรียงลำดับเจ้าที่จะลอง ตัวที่ผู้ใช้เลือกมาก่อนเสมอ
+
+    ตัวที่เลือกไม่ได้ทำงาน (ไม่มีคีย์ หรือเจ้ากำลังล่ม) จะถูกข้ามไป
+    ไม่ต้องรอให้ล้มจริงแล้วค่อยเปลี่ยน เพราะจะเสียเวลารอผู้ใช้
+    """
+    chain: list[AiProvider] = []
+
+    head = AiProvider.parse(preferred) if preferred else settings.provider
+    if settings.is_ready(head):
+        chain.append(head)
+
+    if settings.allow_fallback:
+        for provider in FALLBACK_ORDER:
+            if provider not in chain and settings.is_ready(provider):
+                chain.append(provider)
+
+    return chain
 
 
 def generate_image(
@@ -256,6 +319,9 @@ def generate_image(
 ) -> GenerateResult:
     """สร้างภาพหนึ่งภาพจากคำบรรยาย คืนผลลัพธ์พร้อมข้อความเตือนเมื่อล้มเหลว
 
+    ถ้าเจ้าที่เลือกไว้ล้มจะลองเจ้าถัดไปในลำดับสำรองโดยอัตโนมัติ
+    เพราะเครดิตของแต่ละเจ้าหมดคนละเวลา ถ้ายึดเจ้าเดียวเว็บจะล้มทั้งที่ยังมีทางออก
+
     ไม่โยน exception ออกมาเอง เพราะผู้ใช้ต้องเห็นว่าล้มเหลวเพราะอะไร
     แล้วกดลองใหม่ได้ทันที
     """
@@ -265,46 +331,82 @@ def generate_image(
     if len(text) > 600:
         return GenerateResult(None, "คำบรรยายยาวเกินไป (สูงสุด 600 ตัวอักษร)")
 
-    chosen = (provider or settings.provider.value).strip().lower()
-    call_settings = AiSettings(
-        provider=settings.provider,
+    chain = provider_chain(settings, provider)
+    if not chain:
+        return GenerateResult(None, settings.describe_missing() or NO_PROVIDER_READY_MESSAGE)
+
+    prompt = build_prompt(text, style_key)
+    problems: list[str] = []
+
+    # สุ่มใหม่ทุกครั้งที่ผู้ใช้กด ถ้าใช้ค่าเดิมทุกครั้งจะได้ภาพเดิมเป๊ะ ๆ
+    # ผู้ใช้จะเข้าใจว่าโปรแกรมค้าง ไม่ใช่ทำงานช้า
+    base_seed = (settings.seed_base + secrets.randbelow(100_000)) % 2_147_483_647
+
+    for index, current in enumerate(chain):
+        call_settings = _settings_for(settings, current, model, base_seed + index)
+        try:
+            image = _resolve(current)(prompt, call_settings)
+        except AiError as exc:
+            problems.append(f"{current.value}: {exc}")
+            logger.warning(
+                "สร้างภาพด้วย %s ไม่สำเร็จ: %s", current.value, exc
+            )
+            # ตัวสุดท้ายล้ม = ทุกทางล้มหมด ไม่ต้องลองต่อ
+            if index == len(chain) - 1:
+                break
+            continue
+        except Exception as exc:  # noqa: BLE001 - กันไม่ให้เจ้าหนึ่งล้มทั้งเว็บ
+            problems.append(f"{current.value}: {type(exc).__name__}: {exc}"[:200])
+            logger.exception("สร้างภาพไม่สำเร็จ (%s)", current.value)
+            # error ชนิดนี้แปลว่าเซิร์ฟเวอร์ยังรันโค้ดเก่าที่ยังไม่ได้แก้
+            # ต้องเตือนเรื่องนี้เฉพาะตอนเจอปัญหานี้จริง ไม่ใช่ทุกครั้งที่ล้ม
+            if isinstance(exc, (AttributeError, NameError, TypeError)):
+                problems.append("ดูเหมือนเซิร์ฟเวอร์ยังรันโค้ดเก่าอยู่ ต้อง deploy ใหม่")
+            if index == len(chain) - 1:
+                break
+            continue
+
+        if image.size == 0:
+            problems.append(f"{current.value}: AI คืนภาพที่ว่างเปล่า")
+            continue
+
+        return GenerateResult(image, provider=current.value)
+
+    detail = " | ".join(problems) if problems else "ไม่ทราบสาเหตุ"
+    return GenerateResult(None, f"สร้างภาพไม่สำเร็จ: {detail}")
+
+
+def _settings_for(
+    settings: AiSettings,
+    provider: AiProvider,
+    model: str | None,
+    seed: int,
+) -> AiSettings:
+    """คัดลอกค่าตั้งเป็นชุดของเจ้านั้น
+
+    ค่า model เดียวกันใช้ไม่ได้ทุกเจ้า ถ้าส่งชื่อโมเดลของเจ้าหนึ่งไปให้อีกเจ้า
+    จะได้ 404 หรือ 400 แล้วเสียโอกาสที่เจ้าหลังจะทำได้
+    """
+    return AiSettings(
+        provider=provider,
         api_key=settings.api_key,
         hf_token=settings.hf_token,
         base_url=settings.base_url,
         hf_base_url=settings.hf_base_url,
         hf_provider=settings.hf_provider,
+        pollinations_token=settings.pollinations_token,
+        pollinations_base_url=settings.pollinations_base_url,
+        pollinations_model=settings.pollinations_model,
+        cf_token=settings.cf_token,
+        cf_account_id=settings.cf_account_id,
+        cf_model=settings.cf_model,
+        allow_fallback=settings.allow_fallback,
+        seed_base=seed,
         timeout=settings.timeout,
+        # ใส่ชื่อโมเดลที่ผู้ใช้ส่งมาเฉพาะเจ้าที่เลือก ไม่กระจายไปทุกเจ้า
         model=model or settings.model,
-        hf_model=model or settings.hf_model,
+        hf_model=(model or settings.hf_model) if provider == AiProvider.HUGGINGFACE else settings.hf_model,
     )
-
-    if not settings.configured:
-        return GenerateResult(None, settings.describe_missing())
-
-    prompt = build_prompt(text, style_key)
-    try:
-        if chosen == AiProvider.HUGGINGFACE.value:
-            image = generate_with_huggingface(prompt, call_settings)
-        else:
-            image = generate_with_gemini(prompt, call_settings)
-    except AiError as exc:
-        return GenerateResult(None, f"สร้างภาพไม่สำเร็จ: {exc}")
-    except Exception as exc:  # noqa: BLE001 - กันไม่ให้คำขอเดียวทำเซิร์ฟเวอร์ล้ม
-        # ต้องแสดงข้อความจริงด้วย ไม่ใช่แค่ชื่อชนิด error
-        # เพราะถ้าเห็นแต่ "AttributeError" จะไม่รู้ว่าขาดอะไร ต้องเดาสุ่มไปเรื่อย
-        # และ error ชนิดนี้มักแปลว่าเซิร์ฟเวอร์ยังรันโค้ดเก่าที่ยังไม่ได้แก้
-        detail = str(exc).strip() or type(exc).__name__
-        logger.exception("สร้างภาพไม่สำเร็จ (%s)", chosen)
-        return GenerateResult(
-            None,
-            f"สร้างภาพไม่สำเร็จ: {type(exc).__name__}: {detail[:200]}"
-            " — ถ้าเห็นข้อความว่าขาด attribute หรือชื่อโมเดลผิด "
-            "แปลว่าเซิร์ฟเวอร์ยังรันโค้ดเก่าอยู่ ต้อง deploy ใหม่",
-        )
-
-    if image.size == 0:
-        return GenerateResult(None, "AI คืนภาพที่ว่างเปล่า")
-    return GenerateResult(image)
 
 
 def to_png_data_url(image: np.ndarray) -> str:

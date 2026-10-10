@@ -78,10 +78,23 @@ def test_generate_requires_text() -> None:
 
 
 def test_generate_reports_missing_key() -> None:
-    settings = load_settings({})
+    """ไม่มีเจ้าไหนพร้อมเลยต้องบอกว่าจะตั้งค่าอะไร
+
+    ต้องปิดทางออกฟรีไว้ด้วย ไม่ใช่บอกให้ใส่คีย์เฉพาะทางเดียว
+    เพราะ Pollinations ใช้ได้เลยโดยไม่ต้องมีคีย์
+    """
+    settings = load_settings({"AI_ALLOW_FALLBACK": "false"})
     result = generate.generate_image("แมว", None, settings)
     assert result.ok is False
     assert ENV_API_KEY in (result.note or "")
+
+
+def test_pollinations_needs_no_key_and_is_always_available() -> None:
+    """ไม่มีคีย์ใด ๆ ก็ต้องสร้างภาพได้ เพราะ Pollinations ไม่ต้องใช้คีย์"""
+    settings = load_settings({})
+    assert settings.configured is True
+    chain = generate.provider_chain(settings)
+    assert [p.value for p in chain] == ["pollinations"]
 
 
 def test_generate_rejects_overlong_prompt() -> None:
@@ -91,7 +104,7 @@ def test_generate_rejects_overlong_prompt() -> None:
 
 
 def test_generate_wraps_api_error_as_note(monkeypatch) -> None:
-    settings = load_settings({ENV_API_KEY: "k"})
+    settings = load_settings({ENV_API_KEY: "k", "AI_ALLOW_FALLBACK": "false"})
 
     def boom(*_args, **_kwargs):
         raise generate.AiError("โควตาหมด")
@@ -100,6 +113,50 @@ def test_generate_wraps_api_error_as_note(monkeypatch) -> None:
     result = generate.generate_image("แมว", None, settings)
     assert result.ok is False
     assert "โควตาหมด" in (result.note or "")
+
+
+# --- ระบบสำรองอัตโนมัติ -------------------------------------------------------
+
+
+def test_falls_back_when_first_provider_has_no_credits(monkeypatch) -> None:
+    """เจ้าหลักตอบ 402 ต้องข้ามไปเจ้าฟรีให้เอง ไม่ใช่ล้มให้ผู้ใช้ไปแก้ค่า"""
+    settings = load_settings({"AI_PROVIDER": "huggingface", "HF_TOKEN": "t"})
+    seen: list[str] = []
+
+    def out_of_credits(prompt, _settings):
+        seen.append("huggingface")
+        raise generate.AiError("AI ตอบกลับข้อผิดพลาด 402: เครดิตหมด")
+
+    monkeypatch.setattr(generate, "generate_with_huggingface", out_of_credits)
+    monkeypatch.setattr(
+        generate.freebies,
+        "generate_with_pollinations",
+        lambda prompt, _settings: seen.append("pollinations") or sample_image(),
+    )
+
+    result = generate.generate_image("แมว", None, settings)
+
+    assert result.ok is True
+    assert seen == ["huggingface", "pollinations"]
+    assert result.provider == "pollinations"
+
+
+def test_reports_every_provider_that_failed() -> None:
+    """ทุกเจ้าล้มหมดต้องเห็นเหตุผลของทุกเจ้า ไม่ใช่แค่เจ้าสุดท้าย"""
+    settings = load_settings({ENV_API_KEY: "k"})
+
+    result = generate.generate_image("แมว", None, settings, provider="gemini")
+    # เครือข่ายถูกบล็อกโดย fixture ทำให้ทุกเจ้าล้มจริง
+    assert result.ok is False
+    assert "gemini" in (result.note or "")
+    assert "pollinations" in (result.note or "")
+
+
+def test_fallback_can_be_turned_off() -> None:
+    """AI_ALLOW_FALLBACK=false ต้องไม่เรียกเจ้าอื่นแม้เจ้าหลักไม่มีคีย์"""
+    settings = load_settings({"AI_ALLOW_FALLBACK": "false"})
+    assert settings.configured is False
+    assert generate.provider_chain(settings) == []
 
 
 def test_generate_returns_image_on_success(monkeypatch) -> None:
@@ -111,7 +168,7 @@ def test_generate_returns_image_on_success(monkeypatch) -> None:
 
 
 def test_generate_uses_huggingface_when_chosen(monkeypatch) -> None:
-    settings = load_settings({ENV_API_KEY: "k"})
+    settings = load_settings({ENV_API_KEY: "k", "HF_TOKEN": "t"})
     called = {}
 
     def fake_hf(prompt, _settings):
@@ -174,7 +231,9 @@ def test_gemini_request_is_text_only(monkeypatch) -> None:
 
 
 def test_generate_endpoint_rejects_unconfigured(client: TestClient, monkeypatch) -> None:
-    monkeypatch.setattr("app.main._ai_settings", lambda: load_settings({}))
+    monkeypatch.setattr(
+        "app.main._ai_settings", lambda: load_settings({"AI_ALLOW_FALLBACK": "false"})
+    )
     response = client.post("/api/generate", json={"prompt": "แมว"})
     assert response.status_code == 400
     assert ENV_API_KEY in response.json()["detail"]
