@@ -22,7 +22,10 @@ import numpy as np
 from .gemini import describe_connection_error
 from .settings import AiSettings
 
-HF_API_BASE = "https://api-inference.huggingface.co/models"
+# ปลายทางมาจาก settings.hf_base_url เสมอ เพื่อให้เปลี่ยนได้ด้วย AI_HF_BASE_URL
+# ค่าเริ่มต้นคือ router.huggingface.co เพราะ api-inference.huggingface.co
+# ถูกปิดแล้วและไม่มี DNS อีกต่อไป
+DEFAULT_HF_BASE_URL = "https://router.huggingface.co"
 
 # ชื่อย่อในหน้าเว็บ → ชื่อโมเดลจริงบน Hugging Face
 HF_MODELS = {
@@ -133,6 +136,9 @@ def hf_convert_to_lineart(
         raise HfError(settings.describe_missing())
 
     model_id = HF_MODELS.get(model_key, HF_MODELS[DEFAULT_HF_MODEL])
+    # endpoint เดิมถูกปิดไปแล้ว ใช้ค่าจาก settings เพื่อให้เปลี่ยนปลายทางได้
+    # โดยไม่ต้องแก้โค้ด และไม่ให้ไปชนกับค่าของผู้ให้บริการอื่น
+    url = f"{settings.hf_base_url}/{model_id}"
     payload = {
         "inputs": _encode_png(image),
         "parameters": {
@@ -144,7 +150,7 @@ def hf_convert_to_lineart(
         },
     }
     request = urllib.request.Request(
-        f"{HF_API_BASE}/{model_id}",
+        url,
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
         headers={
@@ -154,7 +160,7 @@ def hf_convert_to_lineart(
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=settings.timeout) as response:
             raw = response.read()
     except urllib.error.HTTPError as exc:
         raise HfError(f"HF API ตอบกลับข้อผิดพลาด {exc.code}: {_read_http_error(exc)}") from exc

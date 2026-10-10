@@ -130,6 +130,21 @@ OpenCV ทำได้แค่กรองภาพ ไม่สามารถ
 | `AI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta` | เปลี่ยนได้ถ้าใช้ผู้ให้บริการอื่น |
 | `AI_TIMEOUT_SECONDS` | `90` | เวลารอสูงสุดต่อภาพ |
 
+### ถ้าใช้ Hugging Face แทน Gemini
+
+ใส่ `AI_PROVIDER=huggingface` และ `HF_TOKEN` (โทเคนส่วนตัวจาก huggingface.co)
+ตัวแปรอื่นต้องใช้ชื่อของตัวเอง เพราะเป็นคนละผู้ให้บริการกัน
+
+| ตัวแปร | ค่า |
+|---|---|
+| `AI_PROVIDER` | `huggingface` |
+| `HF_TOKEN` | โทเคนของคุณ |
+| `AI_HF_MODEL` | `lineart_sd15` (ชื่อย่อในหน้าเว็บ เช่น `canny_sd15`, `depth_sd15`) |
+| `AI_HF_BASE_URL` | `https://router.huggingface.co` |
+
+หมายเหตุ: ปลายทางเดิม `api-inference.huggingface.co` ถูกปิดไปแล้วและไม่มี DNS
+ต้องใช้ `router.huggingface.co` ค่านี้ถูกตั้งเป็นค่าเริ่มต้นให้แล้ว
+
 ตรวจสถานะได้ที่ `GET /api/health` จะคืน `ai.configured: true/false`
 
 ### ข้อควรรู้

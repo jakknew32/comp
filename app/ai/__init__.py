@@ -95,6 +95,11 @@ def status(settings: AiSettings) -> dict:
             cost if settings.configured else None
         ),
         "message": None if settings.configured else settings.describe_missing(),
+        "endpoint": (
+            settings.hf_base_url
+            if provider == "huggingface"
+            else settings.base_url
+        ),
         "styles": list_styles(),
     }
 
@@ -149,6 +154,7 @@ def enhance(
                 api_key=settings.api_key,
                 hf_token=settings.hf_token,
                 base_url=settings.base_url,
+                hf_base_url=settings.hf_base_url,
                 timeout=settings.timeout,
                 model=model or settings.model,
                 hf_model=settings.hf_model,

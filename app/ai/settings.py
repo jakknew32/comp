@@ -17,11 +17,15 @@ ENV_HF_TOKEN = "HF_TOKEN"
 ENV_MODEL = "AI_MODEL"
 ENV_HF_MODEL = "AI_HF_MODEL"
 ENV_BASE_URL = "AI_BASE_URL"
+ENV_HF_BASE_URL = "AI_HF_BASE_URL"
 ENV_TIMEOUT = "AI_TIMEOUT_SECONDS"
 
 DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
 DEFAULT_HF_MODEL = "lineart_sd15"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+# Hugging Face ย้ายเข้าร้านค้า unified และปิด api-inference.huggingface.co ไปแล้ว
+# ตัวเก่าไม่มี DNS อีกต่อไป ต้องใช้ router.huggingface.co แทน
+DEFAULT_HF_BASE_URL = "https://router.huggingface.co"
 DEFAULT_TIMEOUT = 90.0
 
 # ประมาณการค่าใช้จ่ายต่อหนึ่งภาพ ใช้แสดงในหน้าเว็บให้ผู้ใช้ตัดสินใจ
@@ -54,6 +58,7 @@ class AiSettings:
     model: str = DEFAULT_MODEL
     hf_model: str = "lineart_sd15"
     base_url: str = DEFAULT_BASE_URL
+    hf_base_url: str = DEFAULT_HF_BASE_URL
     timeout: float = DEFAULT_TIMEOUT
 
     @property
@@ -106,9 +111,12 @@ def load_settings(env: dict | None = None) -> AiSettings:
         hf_token = (source.get(ENV_HF_TOKEN) or "").strip() or None
 
     model = (source.get(ENV_MODEL) or "").strip() or DEFAULT_MODEL
-    hf_model = (source.get("AI_HF_MODEL") or "").strip() or "lineart_sd15"
+    hf_model = (source.get(ENV_HF_MODEL) or "").strip() or DEFAULT_HF_MODEL
     base_url = (source.get(ENV_BASE_URL) or "").strip() or DEFAULT_BASE_URL
     base_url = base_url.rstrip("/")
+    # Hugging Face ใช้ค่าคนละชื่อกับ AI_BASE_URL เพราะเป็นคนละผู้ให้บริการ
+    hf_base_url = (source.get(ENV_HF_BASE_URL) or "").strip() or DEFAULT_HF_BASE_URL
+    hf_base_url = hf_base_url.rstrip("/")
 
     timeout_raw = (source.get(ENV_TIMEOUT) or "").strip()
     try:
@@ -124,5 +132,6 @@ def load_settings(env: dict | None = None) -> AiSettings:
         model=model,
         hf_model=hf_model,
         base_url=base_url,
+        hf_base_url=hf_base_url,
         timeout=timeout,
     )

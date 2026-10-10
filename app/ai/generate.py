@@ -160,7 +160,9 @@ def generate_with_huggingface(
             "guidance_scale": 7.5,
         },
     }
-    url = f"https://api-inference.huggingface.co/models/{settings.hf_model}"
+    # endpoint เดิม api-inference.huggingface.co ถูกปิดแล้ว ไม่มี DNS
+    # ใช้ router.huggingface.co ที่อ่านจาก settings เพื่อให้เปลี่ยนได้จาก env
+    url = f"{settings.hf_base_url}/{settings.hf_model}"
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -223,6 +225,7 @@ def generate_image(
         api_key=settings.api_key,
         hf_token=settings.hf_token,
         base_url=settings.base_url,
+        hf_base_url=settings.hf_base_url,
         timeout=settings.timeout,
         model=model or settings.model,
         hf_model=model or settings.hf_model,
