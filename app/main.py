@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import base64
 import io
+import itertools
 import json
 import logging
+import threading
 from datetime import datetime
 from functools import lru_cache
 import random
@@ -66,6 +68,35 @@ app = FastAPI(title="โปรแกรมสร้างสมุดระบ�
 _CACHE: dict[str, convert.ConvertResult] = {}
 _CACHE_LIMIT = 48
 _REFS: dict[str, str] = {}  # รหัสอ้างอิง -> คีย์ในแคช
+_CACHE_LOCK = threading.Lock()  # ป้องกันการแก้แคชพร้อมกันจากหลาย request
+
+
+def _cache_put(key: str, result: convert.ConvertResult) -> None:
+    """ใส่ผลลัพธ์ลงแคช ถ้าเต็มให้เลือกทิ้งตัวที่ใส่ก่อนหน้านี้นานที่สุด
+
+    ผลลัพธ์แต่ละรายการคือ mask ขนาดใหญ่ (หลายร้อย KB ถึงหลาย MB)
+    จึงต้องกันไม่ให้โตเกินเพดานเด็ดขาด ไม่ใช่แค่ "พยายาม" ใส่แล้วค่อยตัดทิ้งทีหลัง
+    """
+    with _CACHE_LOCK:
+        if len(_CACHE) >= _CACHE_LIMIT:
+            # dict เก็บการแทรกตามลำดับ ตัวแรกคือตัวที่ใส่ก่อนหน้านี้นานที่สุด
+            for oldest in list(_CACHE)[: len(_CACHE) - _CACHE_LIMIT + 1]:
+                _CACHE.pop(oldest, None)
+                for ref in [r for r, k in _REFS.items() if k == oldest]:
+                    _REFS.pop(ref, None)
+        _CACHE[key] = result
+
+
+def _cache_get(key: str) -> convert.ConvertResult | None:
+    with _CACHE_LOCK:
+        return _CACHE.get(key)
+
+
+def _resolve_ref(ref: str) -> convert.ConvertResult | None:
+    """หาผลแปลงจากรหัสอ้างอิงที่หน้าเว็บเก็บไว้ คืน None ถ้าหมดอายุแล้ว"""
+    with _CACHE_LOCK:
+        key = _REFS.get(ref)
+        return _CACHE.get(key) if key else None
 
 
 # --- โมเดลคำขอ ---------------------------------------------------------------
@@ -186,19 +217,24 @@ def _ref_for(key: str) -> str:
     import hashlib
 
     ref = hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
-    _REFS[ref] = key
+    with _CACHE_LOCK:
+        _REFS[ref] = key
     return ref
 
 
 def convert_uploaded(
     raw: bytes, filename: str, params: LineArtParams
-) -> tuple[convert.ConvertResult, np.ndarray, str, str]:
+) -> tuple[convert.ConvertResult, np.ndarray | None, str, str]:
     """แปลงไฟล์ที่อัปโหลด ใช้แคชถ้าเคยประมวลผลด้วยค่าเดิม
 
     คืน (ผลลัพธ์, ภาพต้นฉบับสี, ชื่อกำกับเริ่มต้น, ข้อความเตือนรวม)
+
+    ภาพต้นฉบับสีจะเป็น None เมื่อผลลัพธ์มาจากแคช เพราะแคชเก็บแต่ mask
+    ไม่ได้เก็บภาพต้นฉบับ (เก็บไว้จะกินหน่วยความจำมากเกินไป)
+    ผู้เรียกที่ต้องการใช้ภาพต้นฉบับต้องตรวจ None ก่อนใช้
     """
     key = _cache_key(raw, params)
-    cached = _CACHE.get(key)
+    cached = _cache_get(key)
     if cached is not None:
         return cached, None, imgio.caption_from_filename(filename), ""
 
@@ -221,12 +257,7 @@ def convert_uploaded(
         result = convert.convert(image, params)
     notes.extend(result.warnings)
 
-    if len(_CACHE) >= _CACHE_LIMIT:
-        evicted = next(iter(_CACHE))
-        _CACHE.pop(evicted)
-        for ref in [r for r, k in _REFS.items() if k == evicted]:
-            _REFS.pop(ref, None)
-    _CACHE[key] = result
+    _cache_put(key, result)
 
     return result, image, imgio.caption_from_filename(filename), " | ".join(notes)
 
@@ -552,8 +583,7 @@ def make_pages_by_ref(payload: PagesByRefPayload) -> JSONResponse:
     names: list[str] = []
     missing: list[int] = []
     for index, ref in enumerate(payload.refs):
-        key = _REFS.get(ref)
-        result = _CACHE.get(key) if key else None
+        result = _resolve_ref(ref)
         if result is None or result.is_empty:
             missing.append(index)
             continue
@@ -650,8 +680,7 @@ def make_activity(payload: ActivityPayload) -> JSONResponse:
     else:
         missing: list[int] = []
         for index, image in enumerate(payload.images):
-            key = _REFS.get(image.ref)
-            result = _CACHE.get(key) if key else None
+            result = _resolve_ref(image.ref)
             if result is None or result.is_empty:
                 missing.append(index)
                 continue
@@ -689,16 +718,28 @@ def make_activity(payload: ActivityPayload) -> JSONResponse:
 
     warnings: list[str] = []
     pages: list[str] = []
-    for page_image in book_activity.iter_activity_pages(
+    # ดึงมาอีก 1 หน้าเกินเพื่อยืนยันว่ามีเนื้อหาตกหล่นจริงหรือไม่
+    # ถ้าวนถึงเพดานแล้วยังมีหน้าต่อ ต้องบอกผู้ใช้ว่าเนื้อหาถูกตัดออก
+    # ไม่ใช่ปล่อยให้เห็นแค่จำนวนหน้าแล้วเดาเองว่าขาดอะไรไป
+    stream = book_activity.iter_activity_pages(
         params, match_items, warnings, random.Random()
-    ):
+    )
+    for page_image in itertools.islice(stream, MAX_ACTIVITY_PAGES + 1):
         if len(pages) >= MAX_ACTIVITY_PAGES:
-            warnings.append(f"หนังสือยาวเกิน จึงตัดเหลือ {MAX_ACTIVITY_PAGES} หน้าแรก")
+            warnings.append(
+                f"หนังสือยาวเกินเพดาน {MAX_ACTIVITY_PAGES} หน้า "
+                "เนื้อหาส่วนที่เกินมาได้ถูกตัดทิ้ง ลองแบ่งเป็นหลายชุดถ้าต้องการครบ"
+            )
             break
         pages.append(_data_url_png(page_image, PAGE_PREVIEW_WIDTH_PX))
 
     return JSONResponse(
-        {"count": len(pages), "pages": pages, "warnings": list(dict.fromkeys(warnings))},
+        {
+            "count": len(pages),
+            "pages": pages,
+            "warnings": list(dict.fromkeys(warnings)),
+            "truncated": any("ตัดทิ้ง" in w for w in warnings),
+        },
         headers={"Cache-Control": "no-store"},
     )
 

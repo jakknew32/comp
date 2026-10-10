@@ -1,4 +1,3 @@
-import base64
 import io
 import os
 import re
@@ -7,7 +6,6 @@ import time
 from urllib.parse import unquote, urljoin, urlparse
 import zipfile
 from bs4 import BeautifulSoup
-import cv2
 import numpy as np
 from PIL import Image
 import requests

@@ -68,6 +68,11 @@ def iter_pages(
         return
 
     content_pages = layout.plan_pages(len(masks), book)
+    # เลขหน้านับเฉพาะหน้าเนื้อหา เริ่มที่ 1 และไม่นับหน้าปก
+    # ต้องนับเองแทนการหักจาก page.index เพราะ page.index เริ่มที่ 0
+    # ถ้ามีหน้าปก หน้าเนื้อหาแรกจะได้ index 1 และหักแล้วเหลือ 0
+    # ซึ่ง compose ไม่วาดเลขหน้าให้ ทำให้หน้าแรกไม่มีเลขหน้า
+    content_number = 0
 
     for page in content_pages:
         if page.is_cover:
@@ -84,10 +89,7 @@ def iter_pages(
         page_masks, page_captions = layout.masks_for_page(
             page, masks, captions, book, lineart
         )
-        # เลขหน้านับเฉพาะหน้าเนื้อหา ไม่นับหน้าปก
-        content_number = page.index - (
-            1 if content_pages and content_pages[0].is_cover else 0
-        )
+        content_number += 1
         image, page_notes = compose.render_content_page(
             page_masks,
             page_captions,
