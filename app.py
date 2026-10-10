@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 HAS_COLORING_ENGINE = False
 try:
     from app.book import pdf as book_pdf
-    from app.config import BookParams, LineArtParams
+    from app.config import BookParams, LineArtParams, PAGE_PREVIEW_WIDTH_PX
     from app.lineart import convert, imgio
     HAS_COLORING_ENGINE = True
 except Exception as e:
@@ -36,7 +36,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-def page_to_png(image: Image.Image, width_px: int = 1654) -> bytes:
+def page_to_png(image: Image.Image, width_px: int = PAGE_PREVIEW_WIDTH_PX) -> bytes:
     """ย่อหน้า A4 เป็น ~200 DPI ขาว-ดำ เพื่อให้ไฟล์เล็กพอสำหรับพรีวิวและสั่งพิมพ์"""
     gray = image.convert("L")
     height_px = round(width_px * gray.height / gray.width)
@@ -155,6 +155,9 @@ def get_clean_filename(url: str, index: int, default_ext: str = ".jpg") -> str:
     parsed = urlparse(url)
     basename = os.path.basename(parsed.path)
     clean_name = unquote(basename).split("?")[0].strip()
+    # ลบอักขระควบคุมและอักขระที่ไม่ปลอดภัยในชื่อไฟล์
+    clean_name = re.sub(r'[<>:"/\\|?*]', '_', clean_name)
+    clean_name = re.sub(r'\s+', '_', clean_name)
     valid_exts = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
     if not clean_name or not clean_name.lower().endswith(valid_exts):
         clean_name = f"image_{index:03d}{default_ext}"

@@ -34,6 +34,8 @@ from .config import (
     STATIC_DIR,
     BookParams,
     LineArtParams,
+    PAGE_PREVIEW_WIDTH_PX,
+    LINEART_THUMB_WIDTH_PX,
 )
 from .lineart import convert, imgio, text
 from .webgrab import WebImageError, download_image, list_images, detect_image_format
@@ -430,9 +432,7 @@ def _data_url_png(image: Image.Image, width_px: int, invert: bool = False) -> st
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-# ขนาดภาพหน้าที่ส่งให้เบราว์เซอร์ ~200 DPI พอสำหรับพรีวิวและสั่งพิมพ์ ไฟล์ต่อหน้าเล็กกว่า PDF มาก
-PAGE_PREVIEW_WIDTH_PX = 1654
-LINEART_THUMB_WIDTH_PX = 360
+# ค่าจะนำเข้าจาก config แล้ว
 
 
 @app.post("/api/convert")

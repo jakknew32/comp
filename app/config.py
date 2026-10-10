@@ -37,6 +37,10 @@ COVER_SUBTITLE_SIZE_PT = 16.0
 COVER_MAX_THUMBS = 9
 COVER_GAP_MM = 5.0
 
+# ขนาดภาพพรีวิวสำหรับแสดงบนเว็บ (พิกเซลด้านกว้าง)
+PAGE_PREVIEW_WIDTH_PX = 1654
+LINEART_THUMB_WIDTH_PX = 360
+
 # ตัวคูณสำหรับแปลงค่า "auto" ให้เป็นตัวเลขที่ใช้ได้จริง
 DETECT_BINARY_RATIO = 0.90
 
