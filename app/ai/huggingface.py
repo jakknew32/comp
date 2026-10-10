@@ -41,12 +41,27 @@ HF_CONTROLNET_MODELS = {
 }
 
 # text-to-image จริง ใช้สร้างภาพจากข้อความได้
+#
+# ตั้งแต่กลางปี 2025 บริการ hf-inference ของ Hugging Face เหลือแค่โมเดลที่รันบน CPU
+# โมเดลสร้างภาพถูกถอดออก ตอบ 410 "model is deprecated" การสร้างภาพต้องผ่าน
+# Inference Providers ของบริษัทอื่น (fal-ai, together, replicate ฯลฯ)
+# ซึ่งแต่ละเจ้ารับคำขอคนละรูปแบบ จึงเรียกผ่านไลบรารี huggingface_hub แทนการยิง HTTP เอง
 HF_TEXT2IMAGE_MODELS = {
     "flux_schnell": "black-forest-labs/FLUX.1-schnell",
+    "flux_dev": "black-forest-labs/FLUX.1-dev",
+    "sd35_large": "stabilityai/stable-diffusion-3.5-large",
+    # ชื่อย่อเดิม: บางตัวไม่มีผู้ให้บริการแล้ว ถ้าล้มจะลองโมเดลสำรองต่อให้เอง
     "sdxl_base": "stabilityai/stable-diffusion-xl-base-1.0",
     "sd_turbo": "stabilityai/sd-turbo",
     "sdxl_turbo": "stabilityai/sdxl-turbo",
 }
+
+# ลำดับโมเดลสำรองเมื่อโมเดลที่เลือกไม่มีผู้ให้บริการ (ตอบ 400/404/410/422)
+HF_TEXT2IMAGE_FALLBACKS = (
+    "black-forest-labs/FLUX.1-schnell",
+    "black-forest-labs/FLUX.1-dev",
+    "stabilityai/stable-diffusion-3.5-large",
+)
 
 # ชื่อย่อเดิมที่หน้าเว็บอาจยังส่งมา ต้องแปลงเป็นโมเดล text-to-image ให้ถูกชนิด
 HF_MODEL_ALIASES = {

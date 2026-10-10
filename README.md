@@ -139,37 +139,28 @@ OpenCV ทำได้แค่กรองภาพ ไม่สามารถ
 |---|---|
 | `AI_PROVIDER` | `huggingface` |
 | `HF_TOKEN` | โทเคนของคุณ |
-| `AI_HF_MODEL` | ดูรายชื่อด้านล่าง |
-| `AI_HF_BASE_URL` | `https://router.huggingface.co/hf-inference/models` |
+| `AI_HF_MODEL` | ดูรายชื่อด้านล่าง (ไม่ใส่ก็ได้) |
+| `AI_HF_PROVIDER` | `auto` (ค่าเริ่มต้น ให้ Hugging Face เลือกให้) หรือระบุเอง เช่น `fal-ai`, `together`, `replicate` |
 
-โมเดลใน `AI_HF_MODEL` แยกเป็น 2 กลุ่มเพราะใช้งานต่างกัน ห้ามสลับกัน
+**สร้างภาพจากข้อความ** เรียกผ่าน Hugging Face Inference Providers (ไลบรารี `huggingface_hub`)
+เพราะบริการ `hf-inference` เดิมเลิกให้บริการโมเดลสร้างภาพแล้ว (ตอบ 410 "model is deprecated")
+การสร้างภาพตอนนี้รันที่ผู้ให้บริการรายอื่นที่ Hugging Face ต่อให้ จึงต้องมี
+- token ที่ติ๊กสิทธิ์ **Make calls to Inference Providers** ตอนสร้าง
+- เครดิตเหลือ (บัญชีฟรีมีเครดิตรายเดือนจำกัด ถ้าหมดจะได้ข้อความแจ้งเรื่องเครดิต)
 
-**สร้างภาพจากข้อความ** (text-to-image) ใช้ชื่อย่อเหล่านี้
-
-| ชื่อย่อ | โมเดลจริง |
+| ชื่อย่อใน `AI_HF_MODEL` | โมเดลจริง |
 |---|---|
-| `flux_schnell` | `black-forest-labs/FLUX.1-schnell` (ค่าเริ่มต้น เร็วและไม่มีโควตา) |
-| `sdxl_base` | `stabilityai/stable-diffusion-xl-base-1.0` |
-| `sd_turbo` | `stabilityai/sd-turbo` |
-| `sdxl_turbo` | `stabilityai/sdxl-turbo` |
+| `flux_schnell` | `black-forest-labs/FLUX.1-schnell` (ค่าเริ่มต้น) |
+| `flux_dev` | `black-forest-labs/FLUX.1-dev` |
+| `sd35_large` | `stabilityai/stable-diffusion-3.5-large` |
 
-**แปลงภาพถ่ายเป็นลายเส้น** (ControlNet) ใช้ชื่อย่อเหล่านี้
+ถ้าโมเดลที่เลือกไม่มีผู้ให้บริการรับแล้ว (ตอบ 400/404/410/422) โปรแกรมจะลองโมเดลสำรองตามลำดับข้างบนให้เอง
+ชื่อย่อเดิม (`lineart_sd15`, `sdxl_base` ฯลฯ) ยังใช้ได้ แปลงให้อัตโนมัติ
 
-| ชื่อย่อ | โมเดลจริง |
-|---|---|
-| `lineart_sd15` | `lllyasviel/control_v11p_sd15_lineart` (ค่าเริ่มต้น) |
-| `canny_sd15` | `lllyasviel/control_v11p_sd15_canny` |
-| `lineart_sd21` | `xinsir/controlnet-lineart-sd21` |
-| `depth_sd15` | `lllyasviel/control_v11f1p_sd15_depth` |
+ถ้าสร้างภาพผ่าน Hugging Face ไม่ได้ ให้เปลี่ยนไปใช้ Gemini (`AI_PROVIDER=gemini` และ `AI_API_KEY`)
 
-ControlNet รับภาพนำ ไม่รับข้อความ จึงใช้สร้างภาพจากข้อความไม่ได้
-โปรแกรมแปลงชื่อย่อให้ถูกกลุ่มให้อัตโนมัติ ถ้าตั้งผิดกลุ่มก็ยังทำงานได้
-
-หมายเหตุเรื่องปลายทาง ปลายทางเดิม `api-inference.huggingface.co` ถูกปิดไปแล้วและไม่มี DNS
-ต้องใช้ `router.huggingface.co` และต้องมี path `/hf-inference/models` ต่อท้ายด้วย
-ถ้าตัด path ทิ้งจะได้ข้อความว่า "ไม่พบโมเดลที่ระบุ" แม้ตั้งค่าถูกต้องทุกอย่าง
-
-โมเดลบางตัวอาจต้องขอโควตา (เรียกฟรีแต่รอคิวนาน) ถ้าได้ 403 หรือ 429 ให้เปลี่ยนไปใช้ `flux_schnell`
+> ส่วน **แปลงภาพถ่ายเป็นลายเส้นด้วย AI** (ControlNet) ยังเรียก `hf-inference` แบบเดิม
+> ซึ่งน่าจะได้ 410 เช่นกัน ยังไม่ได้ย้ายไป Inference Providers แนะนำให้ใช้ Gemini สำหรับฟีเจอร์นี้
 
 ตรวจสถานะได้ที่ `GET /api/health` จะคืน `ai.configured: true/false`
 

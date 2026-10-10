@@ -18,6 +18,7 @@ ENV_MODEL = "AI_MODEL"
 ENV_HF_MODEL = "AI_HF_MODEL"
 ENV_BASE_URL = "AI_BASE_URL"
 ENV_HF_BASE_URL = "AI_HF_BASE_URL"
+ENV_HF_PROVIDER = "AI_HF_PROVIDER"
 ENV_TIMEOUT = "AI_TIMEOUT_SECONDS"
 
 DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
@@ -61,6 +62,9 @@ class AiSettings:
     hf_model: str = "lineart_sd15"
     base_url: str = DEFAULT_BASE_URL
     hf_base_url: str = DEFAULT_HF_BASE_URL
+    # ผู้ให้บริการสร้างภาพผ่าน Hugging Face Inference Providers: "auto" = ให้ HF เลือกตัวแรกที่ใช้ได้
+    # หรือระบุเอง เช่น fal-ai, together, replicate
+    hf_provider: str = "auto"
     timeout: float = DEFAULT_TIMEOUT
 
     @property
@@ -120,6 +124,8 @@ def load_settings(env: dict | None = None) -> AiSettings:
     hf_base_url = (source.get(ENV_HF_BASE_URL) or "").strip() or DEFAULT_HF_BASE_URL
     hf_base_url = hf_base_url.rstrip("/")
 
+    hf_provider = (source.get(ENV_HF_PROVIDER) or "").strip().lower() or "auto"
+
     timeout_raw = (source.get(ENV_TIMEOUT) or "").strip()
     try:
         timeout = float(timeout_raw) if timeout_raw else DEFAULT_TIMEOUT
@@ -135,5 +141,6 @@ def load_settings(env: dict | None = None) -> AiSettings:
         hf_model=hf_model,
         base_url=base_url,
         hf_base_url=hf_base_url,
+        hf_provider=hf_provider,
         timeout=timeout,
     )

@@ -144,65 +144,95 @@ def generate_with_gemini(
     return _decode_image(_extract_image(payload))
 
 
+def _hf_candidate_models(settings: AiSettings) -> list[str]:
+    """โมเดลที่จะลองตามลำดับ: ตัวที่เลือกก่อน แล้วตามด้วยตัวสำรอง"""
+    key = huggingface.HF_MODEL_ALIASES.get(settings.hf_model, settings.hf_model)
+    chosen = huggingface.HF_TEXT2IMAGE_MODELS.get(key, key)
+    if "/" not in chosen:
+        # ชื่อย่อที่ไม่รู้จัก ใช้ค่าเริ่มต้นแทนเพื่อไม่ให้ยิงด้วยชื่อที่ผิด
+        chosen = huggingface.HF_TEXT2IMAGE_MODELS[huggingface.DEFAULT_HF_TEXT2IMAGE]
+    ordered = [chosen]
+    ordered += [m for m in huggingface.HF_TEXT2IMAGE_FALLBACKS if m != chosen]
+    return ordered
+
+
+def _hf_error_message(status: int | None, detail: str) -> str:
+    """แปลง error ของ Hugging Face เป็นข้อความที่บอกวิธีแก้"""
+    detail = (detail or "").strip().replace("\n", " ")[:200]
+    if status == 401:
+        return "HF_TOKEN ไม่ถูกต้องหรือหมดอายุ"
+    if status == 403:
+        return (
+            "HF_TOKEN ไม่มีสิทธิ์เรียก Inference Providers "
+            "(ตอนสร้าง token ต้องติ๊ก 'Make calls to Inference Providers')"
+        )
+    if status == 402:
+        return (
+            "เครดิต Inference Providers หมด บัญชีฟรีมีเครดิตรายเดือนจำกัด "
+            "ต้องเติมเครดิต/สมัคร PRO หรือเปลี่ยนไปใช้ Gemini (AI_PROVIDER=gemini)"
+        )
+    if status == 429:
+        return "เรียกถี่เกินกำหนด (rate limit) กรุณารอสักครู่แล้วลองใหม่"
+    return detail or "ไม่ทราบสาเหตุ"
+
+
 def generate_with_huggingface(
     prompt: str,
     settings: AiSettings,
 ) -> np.ndarray:
-    """สร้างภาพจากข้อความด้วย Hugging Face Inference API
+    """สร้างภาพจากข้อความผ่าน Hugging Face Inference Providers
 
-    โมเดล text-to-image รับข้อความใน inputs แล้วคืนไบต์ภาพโดยตรง
-    ไม่ใช่ JSON จึงต้องลองถอดเป็นภาพทันที
+    บริการ hf-inference เดิมเลิกให้บริการโมเดลสร้างภาพแล้ว (ตอบ 410)
+    ต้องผ่านผู้ให้บริการรายอื่นที่ HF ต่อให้ จึงเรียกผ่านไลบรารี huggingface_hub
+    ที่รู้เส้นทางและรูปแบบคำขอของแต่ละเจ้า แทนการยิง HTTP เอง
     """
     if not settings.hf_token:
         raise AiError(settings.describe_missing())
 
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "negative_prompt": "color, shading, shadow, gradient, noise, blur, watermark, text, photo",
-            "num_inference_steps": 25,
-            "guidance_scale": 7.5,
-        },
-    }
-    # hf_model ที่หน้าเว็บส่งมาเป็นชื่อย่อ ไม่ใช่ชื่อโมเดลจริง
-    # และค่าเริ่มต้นเดิมเป็นชื่อย่อของ ControlNet ซึ่งสร้างภาพจากข้อความไม่ได้
-    # จึงต้องแปลงเป็นชื่อย่อของ text-to-image ก่อน แล้วค่อยแปลงเป็นชื่อโมเดลจริง
-    key = huggingface.HF_MODEL_ALIASES.get(
-        settings.hf_model, settings.hf_model
-    )
-    model_id = huggingface.HF_TEXT2IMAGE_MODELS.get(key, key)
-    if "/" not in model_id:
-        # ยังเป็นชื่อย่อที่ไม่รู้จัก ใช้ค่าเริ่มต้นแทนเพื่อไม่ให้ยิงไป 404
-        model_id = huggingface.HF_TEXT2IMAGE_MODELS[
-            huggingface.DEFAULT_HF_TEXT2IMAGE
-        ]
-    url = f"{settings.hf_base_url}/{model_id}"
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {settings.hf_token}",
-            "Content-Type": "application/json",
-        },
-    )
-
     try:
-        with urllib.request.urlopen(request, timeout=settings.timeout) as response:
-            raw = response.read()
-    except urllib.error.HTTPError as exc:
+        from huggingface_hub import InferenceClient
+        from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError
+    except ImportError as exc:
         raise AiError(
-            f"AI ตอบกลับข้อผิดพลาด {exc.code}: {huggingface._read_http_error(exc)}"
+            "ยังไม่ได้ติดตั้งไลบรารี huggingface_hub — เพิ่มลงใน requirements.txt แล้ว deploy ใหม่"
         ) from exc
-    except urllib.error.URLError as exc:
-        raise AiError(describe_connection_error(url, exc)) from exc
-    except TimeoutError as exc:
-        raise AiError("AI ตอบนานเกินกำหนดเวลา") from exc
 
-    image = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
-    if image is None:
-        raise AiError("AI ไม่ได้ส่งภาพกลับมา")
-    return image
+    client = InferenceClient(
+        provider=settings.hf_provider or "auto",
+        api_key=settings.hf_token,
+        timeout=settings.timeout,
+    )
+
+    last_problem = ""
+    for model_id in _hf_candidate_models(settings):
+        try:
+            picture = client.text_to_image(prompt, model=model_id)
+        except InferenceTimeoutError as exc:
+            raise AiError("AI ตอบนานเกินกำหนดเวลา") from exc
+        except HfHubHTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            message = _hf_error_message(status, str(exc))
+            if status in (400, 404, 410, 422):
+                # โมเดลนี้ไม่มีผู้ให้บริการรับแล้ว → ลองตัวสำรอง
+                last_problem = f"{model_id}: {status} {message}"
+                logger.warning("โมเดล %s ใช้ไม่ได้ (%s) ลองตัวถัดไป", model_id, status)
+                continue
+            raise AiError(f"AI ตอบกลับข้อผิดพลาด {status}: {message}") from exc
+        except ValueError as exc:
+            # ไม่มีผู้ให้บริการสำหรับโมเดลนี้ในบัญชีของคุณ
+            last_problem = f"{model_id}: {str(exc)[:160]}"
+            continue
+
+        array = cv2.cvtColor(np.asarray(picture.convert("RGB")), cv2.COLOR_RGB2BGR)
+        if array.size == 0:
+            raise AiError("AI ไม่ได้ส่งภาพกลับมา")
+        return array
+
+    raise AiError(
+        "ไม่มีโมเดลสร้างภาพที่ใช้ได้ผ่าน Hugging Face"
+        + (f" ({last_problem})" if last_problem else "")
+        + " — ลองเปลี่ยนไปใช้ Gemini (AI_PROVIDER=gemini)"
+    )
 
 
 class GenerateResult:
@@ -242,6 +272,7 @@ def generate_image(
         hf_token=settings.hf_token,
         base_url=settings.base_url,
         hf_base_url=settings.hf_base_url,
+        hf_provider=settings.hf_provider,
         timeout=settings.timeout,
         model=model or settings.model,
         hf_model=model or settings.hf_model,
