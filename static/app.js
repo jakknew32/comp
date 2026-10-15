@@ -762,8 +762,9 @@ async function convertAll() {
   return ok > 0;
 }
 
-/* ขั้นที่ 2: รวมเล่ม ได้ภาพ "ทุกหน้า" มาให้ดูและสั่งพิมพ์ */
-async function requestPages(usable) {
+/* ขั้นที่ 2: รวมเล่ม ได้ภาพ "ทุกหน้า" มาให้ดูและสั่งพิมพ์
+   ส่งงานเข้าคิวที่เซิร์ฟเวอร์ แล้วถามสถานะเป็นระยะ จึงไม่มีคำขอไหนค้างนานจนได้ 502 */
+function startPagesJob(usable) {
   if (dom.skipConvert.checked) {
     // ไม่แปลง: ส่งไฟล์ไปให้เซิร์ฟเวอร์ใช้ตามที่เป็น (เบามาก ไม่มีขั้นแปลง)
     const body = new FormData();
@@ -771,10 +772,10 @@ async function requestPages(usable) {
     body.append("captions", JSON.stringify(usable.map((i) => i.caption)));
     body.append("lineart", convertKey());
     body.append("book", JSON.stringify(bookPayload()));
-    return fetch("/api/pages", { method: "POST", body });
+    return fetch("/api/jobs/pages", { method: "POST", body });
   }
   // แปลงแล้ว: ส่งแค่รหัสอ้างอิงผลแปลงที่เก็บไว้ที่เซิร์ฟเวอร์ ไม่ต้องอัปโหลดรูปซ้ำ
-  return fetch("/api/pages-by-ref", {
+  return fetch("/api/jobs/pages-by-ref", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -784,6 +785,50 @@ async function requestPages(usable) {
       book: bookPayload(),
     }),
   });
+}
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/* ถามสถานะงานจนเสร็จ คืน {data} เมื่อสำเร็จ หรือ {error} เมื่อล้มเหลว */
+async function waitForJob(jobId) {
+  const POLL_MS = 800;
+  const MAX_NETWORK_FAILURES = 6; // เน็ตสะดุดชั่วคราวได้ แต่ไม่ถามวนไม่รู้จบ
+  let failures = 0;
+  for (;;) {
+    let response;
+    try {
+      response = await fetch("/api/jobs/" + jobId, { cache: "no-store" });
+    } catch (_) {
+      failures++;
+      if (failures >= MAX_NETWORK_FAILURES) return { error: "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ" };
+      setStatus("⏳ สัญญาณสะดุด กำลังลองเชื่อมต่อใหม่...");
+      await sleep(POLL_MS * 2);
+      continue;
+    }
+    failures = 0;
+    if (!response.ok) return { error: await readError(response) };
+    const info = await response.json();
+    if (info.state === "error") {
+      return { error: (info.error && info.error.detail) || "รวมเล่มไม่สำเร็จ" };
+    }
+    if (info.state === "done") {
+      setProgress(1);
+      const result = await fetch("/api/jobs/" + jobId + "/result", { cache: "no-store" });
+      if (!result.ok) return { error: await readError(result) };
+      return { data: await result.json() };
+    }
+    if (info.state === "queued") {
+      setProgress(null);
+      setStatus(
+        info.queue_position > 1
+          ? `⏳ รอคิว (ลำดับที่ ${info.queue_position}) มีงานอื่นกำลังรวมเล่มอยู่...`
+          : "⏳ รอคิวสักครู่..."
+      );
+    } else {
+      setProgress(info.total > 0 ? info.done / info.total : null);
+      const pct = info.total > 0 ? ` (${Math.round((info.done / info.total) * 100)}%)` : "";
+      setStatus("⏳ " + (info.message || "กำลังรวมเล่ม...") + pct);
+    }
+    await sleep(POLL_MS);
+  }
 }
 async function makeBook() {
   if (state.items.length === 0) return;
@@ -798,9 +843,9 @@ async function makeBook() {
   }
   setBusy(true, "book");
   clearPages();
-  setStatus("⏳ กำลังรวมเล่ม...");
+  setStatus("⏳ กำลังส่งงานรวมเล่ม...");
   try {
-    let response = await requestPages(usable);
+    let response = await startPagesJob(usable);
     if (response.status === 409) {
       // ผลแปลงบางรูปหมดอายุที่เซิร์ฟเวอร์ (เช่นเซิร์ฟเวอร์รีสตาร์ท) → แปลงเฉพาะรูปเหล่านั้นใหม่แล้วลองอีกครั้ง
       const info = await response.json();
@@ -815,14 +860,20 @@ async function makeBook() {
         return;
       }
       setBusy(true, "book");
-      setStatus("⏳ กำลังรวมเล่ม...");
-      response = await requestPages(usable);
+      setStatus("⏳ กำลังส่งงานรวมเล่ม...");
+      response = await startPagesJob(usable);
     }
     if (!response.ok) {
       setStatus(await readError(response), "error");
       return;
     }
-    const data = await response.json();
+    const { job_id: jobId } = await response.json();
+    const outcome = await waitForJob(jobId);
+    if (outcome.error) {
+      setStatus(outcome.error, "error");
+      return;
+    }
+    const data = outcome.data;
     showPages(data.pages);
     dom.pagesCard.scrollIntoView({ behavior: "smooth", block: "start" });
     const extra = (data.warnings || []).concat(data.skipped || []).join(" · ");

@@ -1,0 +1,857 @@
+diff --git a/app/jobs.py b/app/jobs.py
+new file mode 100644
+index 0000000..f593139
+--- /dev/null
++++ b/app/jobs.py
+@@ -0,0 +1,184 @@
++"""คิวงานเบื้องหลังสำหรับงานหนัก (รวมเล่ม) พร้อมรายงานความคืบหน้า
++
++ทำไมต้องมี
++  เดิมการรวมเล่มทำจบในคำขอเดียว ถ้าเล่มใหญ่ ใช้เวลานานหรือกินหน่วยความจำมาก
++  ตัวกลางของ Render จะตัดการเชื่อมต่อแล้วหน้าเว็บได้ 502 โดยไม่เห็นความคืบหน้าเลย
++  ตอนนี้คำขอแรกแค่ "ส่งงานเข้าคิว" แล้วตอบกลับทันที หน้าเว็บถามสถานะเป็นระยะ
++  จึงไม่มีคำขอไหนค้างนาน และเห็นเปอร์เซ็นต์จริงว่าทำถึงหน้าไหนแล้ว
++
++ข้อจำกัดโดยตั้งใจ (เหมาะกับแผนฟรีที่ RAM น้อย)
++  - ทำงานทีละงานเท่านั้น (worker เดียว) เพื่อไม่ให้หลายงานแย่งหน่วยความจำพร้อมกัน
++  - รับงานที่ยังไม่จบได้จำกัดจำนวน เกินแล้วตอบ 429 ให้ลองใหม่
++  - เก็บผลไว้ในหน่วยความจำชั่วคราวแล้วลบเองเมื่อหมดเวลา ไม่เขียนลงดิสก์
++  - ถ้าเซิร์ฟเวอร์รีสตาร์ท งานที่ค้างอยู่จะหายไป หน้าเว็บจะได้ 404 ตอนถามสถานะ
++    และแจ้งผู้ใช้ให้กดรวมเล่มใหม่
++"""
++
++from __future__ import annotations
++
++import logging
++import threading
++import time
++import uuid
++from collections import OrderedDict
++from concurrent.futures import ThreadPoolExecutor
++from dataclasses import dataclass, field
++from typing import Any, Callable
++
++logger = logging.getLogger("coloring_book")
++
++# ผลของงานที่เสร็จแล้วถูกเก็บไว้ให้ดึงได้ภายในเวลานี้ แล้วถูกลบทิ้ง
++JOB_TTL_SECONDS = 15 * 60
++# งานที่ยังรอหรือกำลังทำ รับได้พร้อมกันไม่เกินนี้ (รวมทุกผู้ใช้)
++MAX_ACTIVE_JOBS = 4
++# จำนวนงานทั้งหมดที่เก็บไว้ในหน่วยความจำ (รวมงานที่เสร็จแล้ว)
++MAX_STORED_JOBS = 10
++
++
++class JobBusy(Exception):
++    """คิวเต็ม ยังรับงานใหม่ไม่ได้"""
++
++
++class JobError(Exception):
++    """งานล้มเหลวด้วยเหตุที่รู้อยู่แล้ว พร้อมรหัสสถานะที่จะบอกหน้าเว็บ"""
++
++    def __init__(self, status: int, detail: str) -> None:
++        super().__init__(detail)
++        self.status = status
++        self.detail = detail
++
++
++@dataclass
++class Job:
++    id: str
++    state: str = "queued"  # queued | running | done | error
++    done: int = 0
++    total: int = 0
++    message: str = ""
++    result: Any = None
++    error: dict | None = None
++    created: float = field(default_factory=time.monotonic)
++    finished: float | None = None
++
++
++class Progress:
++    """ตัวส่งความคืบหน้าให้ฟังก์ชันของงานเรียกใช้ระหว่างทำ"""
++
++    def __init__(self, store: "JobStore", job: Job) -> None:
++        self._store = store
++        self._job = job
++
++    def set_total(self, total: int) -> None:
++        with self._store.lock:
++            self._job.total = max(0, int(total))
++
++    def advance(self, message: str = "", step: int = 1) -> None:
++        with self._store.lock:
++            done = self._job.done + step
++            self._job.done = min(self._job.total, done) if self._job.total else done
++            if message:
++                self._job.message = message
++
++    def note(self, message: str) -> None:
++        with self._store.lock:
++            self._job.message = message
++
++
++class JobStore:
++    def __init__(
++        self,
++        workers: int = 1,
++        ttl: float = JOB_TTL_SECONDS,
++        max_active: int = MAX_ACTIVE_JOBS,
++        max_stored: int = MAX_STORED_JOBS,
++    ) -> None:
++        self.lock = threading.Lock()
++        self._jobs: "OrderedDict[str, Job]" = OrderedDict()
++        self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="job")
++        self._ttl = ttl
++        self._max_active = max_active
++        self._max_stored = max_stored
++
++    # --- ภายใน ----------------------------------------------------------
++
++    def _purge_locked(self) -> None:
++        """ลบงานที่เสร็จแล้วและหมดอายุ และตัดงานที่เสร็จแล้วเก่าที่สุดถ้าเก็บเกินเพดาน"""
++        now = time.monotonic()
++        for job_id in [
++            j.id for j in self._jobs.values()
++            if j.finished is not None and now - j.finished > self._ttl
++        ]:
++            self._jobs.pop(job_id, None)
++        while len(self._jobs) > self._max_stored:
++            finished = [j.id for j in self._jobs.values() if j.finished is not None]
++            if not finished:
++                break
++            self._jobs.pop(finished[0], None)
++
++    def _active_count_locked(self) -> int:
++        return sum(1 for j in self._jobs.values() if j.finished is None)
++
++    def _run(self, job: Job, fn: Callable[[Progress], Any]) -> None:
++        with self.lock:
++            job.state = "running"
++        progress = Progress(self, job)
++        try:
++            result = fn(progress)
++        except JobError as exc:
++            with self.lock:
++                job.error = {"status": exc.status, "detail": exc.detail}
++                job.state = "error"
++                job.finished = time.monotonic()
++            return
++        except Exception:  # noqa: BLE001 - งานล้มต้องไม่ทำให้ worker ตาย
++            logger.exception("job %s failed", job.id)
++            with self.lock:
++                job.error = {"status": 500, "detail": "สร้างเล่มไม่สำเร็จ ลองใหม่อีกครั้ง หรือลดจำนวนรูปลง"}
++                job.state = "error"
++                job.finished = time.monotonic()
++            return
++        with self.lock:
++            job.result = result
++            job.done = job.total or job.done
++            job.state = "done"
++            job.finished = time.monotonic()
++
++    # --- ใช้งาน ----------------------------------------------------------
++
++    def submit(self, fn: Callable[[Progress], Any], total: int = 0) -> Job:
++        with self.lock:
++            self._purge_locked()
++            if self._active_count_locked() >= self._max_active:
++                raise JobBusy
++            job = Job(id=uuid.uuid4().hex, total=total)
++            self._jobs[job.id] = job
++        self._executor.submit(self._run, job, fn)
++        return job
++
++    def get(self, job_id: str) -> Job | None:
++        with self.lock:
++            self._purge_locked()
++            return self._jobs.get(job_id)
++
++    def snapshot(self, job: Job) -> dict:
++        """สถานะที่ส่งให้หน้าเว็บ (ไม่รวมผลลัพธ์ก้อนใหญ่)"""
++        with self.lock:
++            position = 0
++            if job.state == "queued":
++                position = 1 + sum(
++                    1 for j in self._jobs.values()
++                    if j.state == "queued" and j.created < job.created
++                )
++            data = {
++                "state": job.state,
++                "done": job.done,
++                "total": job.total,
++                "message": job.message,
++                "queue_position": position,
++            }
++            if job.error:
++                data["error"] = dict(job.error)
++            return data
++
++    def shutdown(self) -> None:
++        self._executor.shutdown(wait=False, cancel_futures=True)
+diff --git a/app/main.py b/app/main.py
+index f350edb..c479c7a 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -27,7 +27,9 @@ from pydantic import BaseModel, Field, ValidationError
+ 
+ from . import ai
+ from .ai import generate as generate_module
++from .jobs import JobBusy, JobError, JobStore, Progress
+ from .book import activity as book_activity
++from .book import layout as book_layout
+ from .book import pdf as book_pdf
+ from .config import (
+     GRID_OPTIONS,
+@@ -70,6 +72,9 @@ _CACHE_LIMIT = 48
+ _REFS: dict[str, str] = {}  # รหัสอ้างอิง -> คีย์ในแคช
+ _CACHE_LOCK = threading.Lock()  # ป้องกันการแก้แคชพร้อมกันจากหลาย request
+ 
++# คิวงานรวมเล่มเบื้องหลัง ทำทีละงาน (ดู app/jobs.py)
++_JOBS = JobStore()
++
+ 
+ def _cache_put(key: str, result: convert.ConvertResult) -> None:
+     """ใส่ผลลัพธ์ลงแคช ถ้าเต็มให้เลือกทิ้งตัวที่ใส่ก่อนหน้านี้นานที่สุด
+@@ -602,32 +607,209 @@ def make_pages_by_ref(payload: PagesByRefPayload) -> JSONResponse:
+     return _render_pages_response(masks, names, bp, lp, [], [])
+ 
+ 
+-def _render_pages_response(
++def _build_pages_result(
+     masks: list[np.ndarray],
+     names: list[str],
+     bp: BookParams,
+     lp: LineArtParams,
+     warnings: list[str],
+     skipped: list[str],
+-) -> JSONResponse:
++    on_page=None,
++) -> dict:
++    """สร้างภาพทุกหน้าของสมุด on_page(ทำแล้วกี่หน้า, ทั้งหมดกี่หน้า) ถูกเรียกหลังเสร็จแต่ละหน้า"""
+     page_warnings: list[str] = []
+     pages: list[str] = []
++    total = len(book_layout.plan_pages(len(masks), bp)) if masks else 1
+     # แปลงทีละหน้าแล้วทิ้งภาพเต็ม ไม่ถือทุกหน้า 300 DPI ในหน่วยความจำพร้อมกัน
+     for page_image in book_pdf.iter_pages(masks, names, bp, lp, page_warnings):
+         pages.append(_data_url_png(page_image, PAGE_PREVIEW_WIDTH_PX))
+         del page_image
++        if on_page is not None:
++            on_page(len(pages), total)
++
++    return {
++        "count": len(pages),
++        "pages": pages,
++        "warnings": list(dict.fromkeys(warnings + page_warnings)),
++        "skipped": skipped,
++    }
++
+ 
++def _render_pages_response(
++    masks: list[np.ndarray],
++    names: list[str],
++    bp: BookParams,
++    lp: LineArtParams,
++    warnings: list[str],
++    skipped: list[str],
++) -> JSONResponse:
+     return JSONResponse(
+-        {
+-            "count": len(pages),
+-            "pages": pages,
+-            "warnings": list(dict.fromkeys(warnings + page_warnings)),
+-            "skipped": skipped,
+-        },
++        _build_pages_result(masks, names, bp, lp, warnings, skipped),
+         headers={"Cache-Control": "no-store"},
+     )
+ 
+ 
++# --- รวมเล่มแบบงานเบื้องหลัง: ส่งงานเข้าคิว แล้วถามสถานะเป็นระยะ ---------------------
++#
++# เส้นทางเดิม /api/pages และ /api/pages-by-ref ยังอยู่ (ทำจบในคำขอเดียว)
++# หน้าเว็บใช้เส้นทางชุดนี้แทน เพราะคำขอทุกตัวจบเร็ว ไม่ค้างจนตัวกลางของ Render ตัดเป็น 502
++
++
++def _submit_job(fn, total: int = 0) -> JSONResponse:
++    try:
++        job = _JOBS.submit(fn, total=total)
++    except JobBusy:
++        raise HTTPException(
++            status_code=429,
++            detail="เซิร์ฟเวอร์กำลังรวมเล่มให้คนอื่นอยู่หลายงาน กรุณารอสักครู่แล้วกดรวมเล่มอีกครั้ง",
++        ) from None
++    return JSONResponse(
++        {"job_id": job.id, **_JOBS.snapshot(job)},
++        status_code=202,
++        headers={"Cache-Control": "no-store"},
++    )
++
++
++@app.post("/api/jobs/pages-by-ref")
++def start_pages_job_by_ref(payload: PagesByRefPayload) -> JSONResponse:
++    """เริ่มรวมเล่มจากผลแปลงที่เก็บไว้ที่เซิร์ฟเวอร์ ตอบกลับทันทีพร้อมรหัสงาน"""
++    lp = to_lineart_params(payload.lineart)
++    bp = to_book_params(payload.book)
++
++    masks: list[np.ndarray] = []
++    names: list[str] = []
++    missing: list[int] = []
++    for index, ref in enumerate(payload.refs):
++        result = _resolve_ref(ref)
++        if result is None or result.is_empty:
++            missing.append(index)
++            continue
++        masks.append(result.mask)
++        caption = payload.captions[index].strip() if index < len(payload.captions) else ""
++        names.append(caption or f"ภาพที่ {index + 1}")
++
++    if missing:
++        return JSONResponse(
++            status_code=409,
++            content={
++                "detail": "ผลแปลงบางรูปหมดอายุแล้ว กรุณาแปลงรูปเหล่านั้นใหม่",
++                "missing": missing,
++            },
++        )
++
++    total = len(book_layout.plan_pages(len(masks), bp))
++
++    def work(progress: Progress) -> dict:
++        progress.note("กำลังสร้างหน้า")
++        return _build_pages_result(
++            masks, names, bp, lp, [], [],
++            on_page=lambda done, all_pages: progress.advance(f"สร้างหน้า {done} จาก {all_pages}"),
++        )
++
++    return _submit_job(work, total=total)
++
++
++@app.post("/api/jobs/pages")
++async def start_pages_job(
++    files: Annotated[list[UploadFile], File()],
++    lineart: Annotated[str | None, Form()] = None,
++    book: Annotated[str | None, Form()] = None,
++    captions: Annotated[str | None, Form()] = None,
++) -> JSONResponse:
++    """เริ่มรวมเล่มจากไฟล์ที่อัปโหลด (โหมดไม่แปลง) แปลงและสร้างหน้าในงานเบื้องหลัง"""
++    if not files:
++        raise HTTPException(status_code=400, detail="ยังไม่ได้เลือกภาพ")
++    _check_file_count(len(files))
++
++    lp = to_lineart_params(parse_json(lineart, LineArtPayload))
++    bp = to_book_params(parse_json(book, BookPayload))
++
++    try:
++        caption_list = json.loads(captions) if captions else []
++    except json.JSONDecodeError:
++        raise HTTPException(status_code=400, detail="รายการชื่อกำกับไม่ใช่ JSON ที่ถูกต้อง") from None
++    if not isinstance(caption_list, list):
++        raise HTTPException(status_code=400, detail="รายการชื่อกำกับต้องเป็น JSON array")
++
++    # อ่านไฟล์ให้ครบในคำขอนี้ (ตรวจชนิดและขนาดที่นี่ ผู้ใช้เห็นข้อผิดพลาดทันที)
++    uploads: list[tuple[str, bytes]] = []
++    for index, upload in enumerate(files):
++        raw = await read_upload(upload)
++        uploads.append((upload.filename or f"ภาพที่ {index + 1}", raw))
++
++    def work(progress: Progress) -> dict:
++        masks: list[np.ndarray] = []
++        names: list[str] = []
++        warnings: list[str] = []
++        skipped: list[str] = []
++        # ช่วงแรกนับตามจำนวนรูปที่ต้องอ่าน ช่วงหลังนับตามจำนวนหน้าที่ต้องสร้าง
++        progress.set_total(len(uploads))
++
++        for index, (name, raw) in enumerate(uploads):
++            progress.note(f"กำลังอ่านรูปที่ {index + 1} จาก {len(uploads)}")
++            try:
++                result, _, default_caption, warn = convert_uploaded(raw, name, lp)
++            except imgio.ImageLoadError as exc:
++                skipped.append(f"{name}: {exc}")
++                progress.advance()
++                continue
++            if result.is_empty:
++                skipped.append(f"{name}: ไม่พบเส้นในภาพ")
++                progress.advance()
++                continue
++
++            caption = default_caption
++            if index < len(caption_list) and isinstance(caption_list[index], str):
++                caption = caption_list[index].strip() or default_caption
++            masks.append(result.mask)
++            names.append(caption)
++            if warn:
++                warnings.append(f"{name}: {warn}")
++            progress.advance()
++
++        if not masks:
++            detail = "ไม่มีภาพใดที่ใช้ได้"
++            if skipped:
++                detail += " — " + "; ".join(skipped)
++            raise JobError(422, detail)
++
++        pages_total = len(book_layout.plan_pages(len(masks), bp))
++        read_total = len(uploads)
++        progress.set_total(read_total + pages_total)
++        return _build_pages_result(
++            masks, names, bp, lp, warnings, skipped,
++            on_page=lambda done, all_pages: progress.advance(f"สร้างหน้า {done} จาก {all_pages}"),
++        )
++
++    return _submit_job(work, total=len(uploads))
++
++
++@app.get("/api/jobs/{job_id}")
++def job_status(job_id: str) -> JSONResponse:
++    job = _JOBS.get(job_id)
++    if job is None:
++        raise HTTPException(
++            status_code=404,
++            detail="ไม่พบงานนี้แล้ว (เซิร์ฟเวอร์อาจรีสตาร์ทหรืองานหมดอายุ) กรุณากดรวมเล่มอีกครั้ง",
++        )
++    return JSONResponse(_JOBS.snapshot(job), headers={"Cache-Control": "no-store"})
++
++
++@app.get("/api/jobs/{job_id}/result")
++def job_result(job_id: str) -> JSONResponse:
++    job = _JOBS.get(job_id)
++    if job is None:
++        raise HTTPException(
++            status_code=404,
++            detail="ผลของงานนี้หมดอายุแล้ว กรุณากดรวมเล่มอีกครั้ง",
++        )
++    if job.state == "error" and job.error:
++        raise HTTPException(status_code=job.error["status"], detail=job.error["detail"])
++    if job.state != "done":
++        raise HTTPException(status_code=409, detail="งานยังไม่เสร็จ")
++    return JSONResponse(job.result, headers={"Cache-Control": "no-store"})
++
++
+ # --- หนังสือกิจกรรม: เขียนตามรอยประ, ฝึกลากเส้น, จับคู่ ------------------------
+ 
+ MAX_ACTIVITY_PAGES = 40
+diff --git a/static/app.js b/static/app.js
+index f0f3bcb..fa29be9 100644
+--- a/static/app.js
++++ b/static/app.js
+@@ -762,8 +762,9 @@ async function convertAll() {
+   return ok > 0;
+ }
+ 
+-/* ขั้นที่ 2: รวมเล่ม ได้ภาพ "ทุกหน้า" มาให้ดูและสั่งพิมพ์ */
+-async function requestPages(usable) {
++/* ขั้นที่ 2: รวมเล่ม ได้ภาพ "ทุกหน้า" มาให้ดูและสั่งพิมพ์
++   ส่งงานเข้าคิวที่เซิร์ฟเวอร์ แล้วถามสถานะเป็นระยะ จึงไม่มีคำขอไหนค้างนานจนได้ 502 */
++function startPagesJob(usable) {
+   if (dom.skipConvert.checked) {
+     // ไม่แปลง: ส่งไฟล์ไปให้เซิร์ฟเวอร์ใช้ตามที่เป็น (เบามาก ไม่มีขั้นแปลง)
+     const body = new FormData();
+@@ -771,10 +772,10 @@ async function requestPages(usable) {
+     body.append("captions", JSON.stringify(usable.map((i) => i.caption)));
+     body.append("lineart", convertKey());
+     body.append("book", JSON.stringify(bookPayload()));
+-    return fetch("/api/pages", { method: "POST", body });
++    return fetch("/api/jobs/pages", { method: "POST", body });
+   }
+   // แปลงแล้ว: ส่งแค่รหัสอ้างอิงผลแปลงที่เก็บไว้ที่เซิร์ฟเวอร์ ไม่ต้องอัปโหลดรูปซ้ำ
+-  return fetch("/api/pages-by-ref", {
++  return fetch("/api/jobs/pages-by-ref", {
+     method: "POST",
+     headers: { "Content-Type": "application/json" },
+     body: JSON.stringify({
+@@ -785,6 +786,50 @@ async function requestPages(usable) {
+     }),
+   });
+ }
++const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
++/* ถามสถานะงานจนเสร็จ คืน {data} เมื่อสำเร็จ หรือ {error} เมื่อล้มเหลว */
++async function waitForJob(jobId) {
++  const POLL_MS = 800;
++  const MAX_NETWORK_FAILURES = 6; // เน็ตสะดุดชั่วคราวได้ แต่ไม่ถามวนไม่รู้จบ
++  let failures = 0;
++  for (;;) {
++    let response;
++    try {
++      response = await fetch("/api/jobs/" + jobId, { cache: "no-store" });
++    } catch (_) {
++      failures++;
++      if (failures >= MAX_NETWORK_FAILURES) return { error: "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ" };
++      setStatus("⏳ สัญญาณสะดุด กำลังลองเชื่อมต่อใหม่...");
++      await sleep(POLL_MS * 2);
++      continue;
++    }
++    failures = 0;
++    if (!response.ok) return { error: await readError(response) };
++    const info = await response.json();
++    if (info.state === "error") {
++      return { error: (info.error && info.error.detail) || "รวมเล่มไม่สำเร็จ" };
++    }
++    if (info.state === "done") {
++      setProgress(1);
++      const result = await fetch("/api/jobs/" + jobId + "/result", { cache: "no-store" });
++      if (!result.ok) return { error: await readError(result) };
++      return { data: await result.json() };
++    }
++    if (info.state === "queued") {
++      setProgress(null);
++      setStatus(
++        info.queue_position > 1
++          ? `⏳ รอคิว (ลำดับที่ ${info.queue_position}) มีงานอื่นกำลังรวมเล่มอยู่...`
++          : "⏳ รอคิวสักครู่..."
++      );
++    } else {
++      setProgress(info.total > 0 ? info.done / info.total : null);
++      const pct = info.total > 0 ? ` (${Math.round((info.done / info.total) * 100)}%)` : "";
++      setStatus("⏳ " + (info.message || "กำลังรวมเล่ม...") + pct);
++    }
++    await sleep(POLL_MS);
++  }
++}
+ async function makeBook() {
+   if (state.items.length === 0) return;
+   // ถ้ายังมีรูปที่ยังไม่ได้แปลงด้วยค่าปัจจุบัน ให้แปลงให้ก่อนโดยอัตโนมัติ
+@@ -798,9 +843,9 @@ async function makeBook() {
+   }
+   setBusy(true, "book");
+   clearPages();
+-  setStatus("⏳ กำลังรวมเล่ม...");
++  setStatus("⏳ กำลังส่งงานรวมเล่ม...");
+   try {
+-    let response = await requestPages(usable);
++    let response = await startPagesJob(usable);
+     if (response.status === 409) {
+       // ผลแปลงบางรูปหมดอายุที่เซิร์ฟเวอร์ (เช่นเซิร์ฟเวอร์รีสตาร์ท) → แปลงเฉพาะรูปเหล่านั้นใหม่แล้วลองอีกครั้ง
+       const info = await response.json();
+@@ -815,14 +860,20 @@ async function makeBook() {
+         return;
+       }
+       setBusy(true, "book");
+-      setStatus("⏳ กำลังรวมเล่ม...");
+-      response = await requestPages(usable);
++      setStatus("⏳ กำลังส่งงานรวมเล่ม...");
++      response = await startPagesJob(usable);
+     }
+     if (!response.ok) {
+       setStatus(await readError(response), "error");
+       return;
+     }
+-    const data = await response.json();
++    const { job_id: jobId } = await response.json();
++    const outcome = await waitForJob(jobId);
++    if (outcome.error) {
++      setStatus(outcome.error, "error");
++      return;
++    }
++    const data = outcome.data;
+     showPages(data.pages);
+     dom.pagesCard.scrollIntoView({ behavior: "smooth", block: "start" });
+     const extra = (data.warnings || []).concat(data.skipped || []).join(" · ");
+diff --git a/tests/test_jobs.py b/tests/test_jobs.py
+new file mode 100644
+index 0000000..24b3b4e
+--- /dev/null
++++ b/tests/test_jobs.py
+@@ -0,0 +1,303 @@
++"""ทดสอบคิวงานเบื้องหลังและเส้นทาง /api/jobs/*"""
++
++from __future__ import annotations
++
++import json
++import threading
++import time
++
++import cv2
++import numpy as np
++import pytest
++from fastapi.testclient import TestClient
++
++from app import main
++from app.jobs import JobBusy, JobError, JobStore
++from app.main import app
++from tests import fixtures
++
++pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
++
++
++@pytest.fixture(scope="module")
++def client() -> TestClient:
++    return TestClient(app)
++
++
++def png_bytes(image: np.ndarray) -> bytes:
++    ok, buffer = cv2.imencode(".png", image)
++    assert ok
++    return buffer.tobytes()
++
++
++def wait_until(predicate, timeout: float = 30.0) -> None:
++    deadline = time.monotonic() + timeout
++    while time.monotonic() < deadline:
++        if predicate():
++            return
++        time.sleep(0.02)
++    raise AssertionError("รอนานเกินไป")
++
++
++def finish(client: TestClient, job_id: str, timeout: float = 60.0) -> dict:
++    """ถามสถานะจนงานจบ แล้วคืนสถานะสุดท้าย"""
++    deadline = time.monotonic() + timeout
++    while time.monotonic() < deadline:
++        info = client.get(f"/api/jobs/{job_id}").json()
++        if info["state"] in ("done", "error"):
++            return info
++        time.sleep(0.05)
++    raise AssertionError("งานไม่จบภายในเวลาที่กำหนด")
++
++
++# --- JobStore ----------------------------------------------------------------
++
++
++def test_store_runs_job_and_reports_progress() -> None:
++    store = JobStore()
++    gate = threading.Event()
++
++    def work(progress):
++        progress.set_total(4)
++        progress.advance("สอง", step=2)
++        gate.wait(5)
++        progress.advance("สี่", step=2)
++        return {"ok": True}
++
++    job = store.submit(work, total=4)
++    wait_until(lambda: store.snapshot(job)["done"] == 2)
++    mid = store.snapshot(job)
++    assert mid["state"] == "running" and mid["total"] == 4 and mid["message"] == "สอง"
++
++    gate.set()
++    wait_until(lambda: store.get(job.id).state == "done")
++    final = store.snapshot(job)
++    assert final["done"] == final["total"] == 4
++    assert store.get(job.id).result == {"ok": True}
++    store.shutdown()
++
++
++def test_store_progress_never_exceeds_total() -> None:
++    store = JobStore()
++
++    def work(progress):
++        progress.set_total(2)
++        for _ in range(5):
++            progress.advance()
++        return {}
++
++    job = store.submit(work)
++    wait_until(lambda: store.get(job.id).state == "done")
++    assert store.snapshot(job)["done"] == 2
++    store.shutdown()
++
++
++def test_store_reports_known_and_unexpected_errors() -> None:
++    store = JobStore()
++
++    def known(_progress):
++        raise JobError(422, "ไม่มีภาพใดที่ใช้ได้")
++
++    def unexpected(_progress):
++        raise RuntimeError("รายละเอียดภายในต้องไม่หลุดไปถึงผู้ใช้")
++
++    a = store.submit(known)
++    wait_until(lambda: store.get(a.id).state == "error")
++    assert store.snapshot(a)["error"] == {"status": 422, "detail": "ไม่มีภาพใดที่ใช้ได้"}
++
++    b = store.submit(unexpected)
++    wait_until(lambda: store.get(b.id).state == "error")
++    error = store.snapshot(b)["error"]
++    assert error["status"] == 500
++    assert "รายละเอียดภายใน" not in error["detail"]
++
++    # worker ต้องยังทำงานต่อได้หลังมีงานล้ม
++    c = store.submit(lambda _p: {"still": "alive"})
++    wait_until(lambda: store.get(c.id).state == "done")
++    store.shutdown()
++
++
++def test_store_runs_one_job_at_a_time_and_reports_queue_position() -> None:
++    store = JobStore(workers=1)
++    gate = threading.Event()
++    order: list[str] = []
++
++    def first(_p):
++        gate.wait(5)
++        order.append("first")
++        return {}
++
++    def second(_p):
++        order.append("second")
++        return {}
++
++    a = store.submit(first)
++    b = store.submit(second)
++    wait_until(lambda: store.get(a.id).state == "running")
++    snap = store.snapshot(b)
++    assert snap["state"] == "queued" and snap["queue_position"] == 1
++
++    gate.set()
++    wait_until(lambda: store.get(b.id).state == "done")
++    assert order == ["first", "second"]
++    store.shutdown()
++
++
++def test_store_rejects_when_too_many_active() -> None:
++    store = JobStore(max_active=2)
++    gate = threading.Event()
++    store.submit(lambda _p: gate.wait(5) or {})
++    store.submit(lambda _p: gate.wait(5) or {})
++    with pytest.raises(JobBusy):
++        store.submit(lambda _p: {})
++    gate.set()
++    store.shutdown()
++
++
++def test_store_purges_expired_and_caps_stored_jobs() -> None:
++    store = JobStore(ttl=0.05, max_stored=3)
++    job = store.submit(lambda _p: {})
++    wait_until(lambda: store.get(job.id).state == "done")
++    time.sleep(0.1)
++    assert store.get(job.id) is None  # หมดอายุแล้ว
++
++    store = JobStore(ttl=600, max_stored=3)
++    ids = []
++    for _ in range(6):
++        j = store.submit(lambda _p: {})
++        wait_until(lambda j=j: store.get(j.id).state == "done")
++        ids.append(j.id)
++    assert store.get(ids[0]) is None  # เก่าสุดถูกตัดทิ้ง
++    assert store.get(ids[-1]) is not None
++    store.shutdown()
++
++
++# --- เส้นทาง API -------------------------------------------------------------
++
++
++def test_job_by_ref_returns_every_page(client: TestClient) -> None:
++    refs = []
++    for name in ("a.png", "b.png"):
++        r = client.post(
++            "/api/convert",
++            files={"file": (name, png_bytes(fixtures.synthetic_lineart()), "image/png")},
++        )
++        assert r.status_code == 200
++        refs.append(r.json()["ref"])
++
++    start = client.post(
++        "/api/jobs/pages-by-ref", json={"refs": refs, "captions": ["หนึ่ง", "สอง"]}
++    )
++    assert start.status_code == 202
++    body = start.json()
++    assert body["job_id"] and body["total"] == 3  # ปก + 2 หน้า
++
++    info = finish(client, body["job_id"])
++    assert info["state"] == "done"
++    assert info["done"] == info["total"] == 3
++
++    result = client.get(f"/api/jobs/{body['job_id']}/result")
++    assert result.status_code == 200
++    data = result.json()
++    assert data["count"] == 3
++    assert all(p.startswith("data:image/png;base64,") for p in data["pages"])
++
++
++def test_job_by_ref_reports_missing_with_409(client: TestClient) -> None:
++    ok = client.post(
++        "/api/convert",
++        files={"file": ("a.png", png_bytes(fixtures.synthetic_lineart()), "image/png")},
++    ).json()["ref"]
++    response = client.post(
++        "/api/jobs/pages-by-ref", json={"refs": [ok, "0" * 32], "captions": []}
++    )
++    assert response.status_code == 409
++    assert response.json()["missing"] == [1]
++
++
++def test_job_upload_flow_without_conversion(client: TestClient) -> None:
++    start = client.post(
++        "/api/jobs/pages",
++        files=[
++            ("files", ("a.png", png_bytes(fixtures.synthetic_lineart()), "image/png")),
++            ("files", ("b.png", png_bytes(fixtures.synthetic_lineart()), "image/png")),
++        ],
++        data={"lineart": json.dumps({"skip_convert": True})},
++    )
++    assert start.status_code == 202
++    job_id = start.json()["job_id"]
++
++    info = finish(client, job_id)
++    assert info["state"] == "done"
++    # ช่วงอ่านรูป 2 รูป + ช่วงสร้างหน้า 3 หน้า
++    assert info["total"] == 5 and info["done"] == 5
++    assert client.get(f"/api/jobs/{job_id}/result").json()["count"] == 3
++
++
++def test_job_upload_with_nothing_usable_ends_in_error(client: TestClient) -> None:
++    blank = np.full((600, 400), 255, np.uint8)
++    start = client.post(
++        "/api/jobs/pages", files=[("files", ("blank.png", png_bytes(blank), "image/png"))]
++    )
++    assert start.status_code == 202
++    job_id = start.json()["job_id"]
++
++    info = finish(client, job_id)
++    assert info["state"] == "error"
++    assert info["error"]["status"] == 422
++    assert "ไม่มีภาพใดที่ใช้ได้" in info["error"]["detail"]
++
++    result = client.get(f"/api/jobs/{job_id}/result")
++    assert result.status_code == 422
++
++
++def test_job_upload_validates_files_before_queueing(client: TestClient) -> None:
++    """ไฟล์ผิดชนิดหรือมากเกินต้องถูกปฏิเสธทันทีในคำขอแรก ไม่ใช่ไปล้มทีหลังในคิว"""
++    bad = client.post(
++        "/api/jobs/pages", files=[("files", ("note.txt", b"hello", "text/plain"))]
++    )
++    assert bad.status_code == 400
++
++    tiny = [
++        ("files", (f"{i}.png", png_bytes(np.full((8, 8), 255, np.uint8)), "image/png"))
++        for i in range(main.MAX_FILES_PER_REQUEST + 1)
++    ]
++    assert client.post("/api/jobs/pages", files=tiny).status_code == 413
++
++
++def test_job_by_ref_rejects_too_many_refs(client: TestClient) -> None:
++    response = client.post(
++        "/api/jobs/pages-by-ref", json={"refs": ["a" * 32] * (main.MAX_FILES_PER_REQUEST + 1)}
++    )
++    assert response.status_code == 422
++
++
++def test_unknown_job_is_404(client: TestClient) -> None:
++    assert client.get("/api/jobs/" + "0" * 32).status_code == 404
++    assert client.get("/api/jobs/" + "0" * 32 + "/result").status_code == 404
++
++
++def test_result_before_finish_is_409(client: TestClient, monkeypatch) -> None:
++    gate = threading.Event()
++    store = JobStore()
++    monkeypatch.setattr(main, "_JOBS", store)
++    job = store.submit(lambda _p: gate.wait(5) or {"count": 0, "pages": []})
++    assert client.get(f"/api/jobs/{job.id}/result").status_code == 409
++    gate.set()
++    store.shutdown()
++
++
++def test_start_returns_429_when_queue_is_full(client: TestClient, monkeypatch) -> None:
++    gate = threading.Event()
++    store = JobStore(max_active=1)
++    monkeypatch.setattr(main, "_JOBS", store)
++    store.submit(lambda _p: gate.wait(5) or {})
++
++    ref = client.post(
++        "/api/convert",
++        files={"file": ("a.png", png_bytes(fixtures.synthetic_lineart()), "image/png")},
++    ).json()["ref"]
++    response = client.post("/api/jobs/pages-by-ref", json={"refs": [ref]})
++    assert response.status_code == 429
++    gate.set()
++    store.shutdown()

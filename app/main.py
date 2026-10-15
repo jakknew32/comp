@@ -27,7 +27,9 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import ai
 from .ai import generate as generate_module
+from .jobs import JobBusy, JobError, JobStore, Progress
 from .book import activity as book_activity
+from .book import layout as book_layout
 from .book import pdf as book_pdf
 from .config import (
     GRID_OPTIONS,
@@ -69,6 +71,9 @@ _CACHE: dict[str, convert.ConvertResult] = {}
 _CACHE_LIMIT = 48
 _REFS: dict[str, str] = {}  # รหัสอ้างอิง -> คีย์ในแคช
 _CACHE_LOCK = threading.Lock()  # ป้องกันการแก้แคชพร้อมกันจากหลาย request
+
+# คิวงานรวมเล่มเบื้องหลัง ทำทีละงาน (ดู app/jobs.py)
+_JOBS = JobStore()
 
 
 def _cache_put(key: str, result: convert.ConvertResult) -> None:
@@ -602,6 +607,34 @@ def make_pages_by_ref(payload: PagesByRefPayload) -> JSONResponse:
     return _render_pages_response(masks, names, bp, lp, [], [])
 
 
+def _build_pages_result(
+    masks: list[np.ndarray],
+    names: list[str],
+    bp: BookParams,
+    lp: LineArtParams,
+    warnings: list[str],
+    skipped: list[str],
+    on_page=None,
+) -> dict:
+    """สร้างภาพทุกหน้าของสมุด on_page(ทำแล้วกี่หน้า, ทั้งหมดกี่หน้า) ถูกเรียกหลังเสร็จแต่ละหน้า"""
+    page_warnings: list[str] = []
+    pages: list[str] = []
+    total = len(book_layout.plan_pages(len(masks), bp)) if masks else 1
+    # แปลงทีละหน้าแล้วทิ้งภาพเต็ม ไม่ถือทุกหน้า 300 DPI ในหน่วยความจำพร้อมกัน
+    for page_image in book_pdf.iter_pages(masks, names, bp, lp, page_warnings):
+        pages.append(_data_url_png(page_image, PAGE_PREVIEW_WIDTH_PX))
+        del page_image
+        if on_page is not None:
+            on_page(len(pages), total)
+
+    return {
+        "count": len(pages),
+        "pages": pages,
+        "warnings": list(dict.fromkeys(warnings + page_warnings)),
+        "skipped": skipped,
+    }
+
+
 def _render_pages_response(
     masks: list[np.ndarray],
     names: list[str],
@@ -610,22 +643,171 @@ def _render_pages_response(
     warnings: list[str],
     skipped: list[str],
 ) -> JSONResponse:
-    page_warnings: list[str] = []
-    pages: list[str] = []
-    # แปลงทีละหน้าแล้วทิ้งภาพเต็ม ไม่ถือทุกหน้า 300 DPI ในหน่วยความจำพร้อมกัน
-    for page_image in book_pdf.iter_pages(masks, names, bp, lp, page_warnings):
-        pages.append(_data_url_png(page_image, PAGE_PREVIEW_WIDTH_PX))
-        del page_image
-
     return JSONResponse(
-        {
-            "count": len(pages),
-            "pages": pages,
-            "warnings": list(dict.fromkeys(warnings + page_warnings)),
-            "skipped": skipped,
-        },
+        _build_pages_result(masks, names, bp, lp, warnings, skipped),
         headers={"Cache-Control": "no-store"},
     )
+
+
+# --- รวมเล่มแบบงานเบื้องหลัง: ส่งงานเข้าคิว แล้วถามสถานะเป็นระยะ ---------------------
+#
+# เส้นทางเดิม /api/pages และ /api/pages-by-ref ยังอยู่ (ทำจบในคำขอเดียว)
+# หน้าเว็บใช้เส้นทางชุดนี้แทน เพราะคำขอทุกตัวจบเร็ว ไม่ค้างจนตัวกลางของ Render ตัดเป็น 502
+
+
+def _submit_job(fn, total: int = 0) -> JSONResponse:
+    try:
+        job = _JOBS.submit(fn, total=total)
+    except JobBusy:
+        raise HTTPException(
+            status_code=429,
+            detail="เซิร์ฟเวอร์กำลังรวมเล่มให้คนอื่นอยู่หลายงาน กรุณารอสักครู่แล้วกดรวมเล่มอีกครั้ง",
+        ) from None
+    return JSONResponse(
+        {"job_id": job.id, **_JOBS.snapshot(job)},
+        status_code=202,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/jobs/pages-by-ref")
+def start_pages_job_by_ref(payload: PagesByRefPayload) -> JSONResponse:
+    """เริ่มรวมเล่มจากผลแปลงที่เก็บไว้ที่เซิร์ฟเวอร์ ตอบกลับทันทีพร้อมรหัสงาน"""
+    lp = to_lineart_params(payload.lineart)
+    bp = to_book_params(payload.book)
+
+    masks: list[np.ndarray] = []
+    names: list[str] = []
+    missing: list[int] = []
+    for index, ref in enumerate(payload.refs):
+        result = _resolve_ref(ref)
+        if result is None or result.is_empty:
+            missing.append(index)
+            continue
+        masks.append(result.mask)
+        caption = payload.captions[index].strip() if index < len(payload.captions) else ""
+        names.append(caption or f"ภาพที่ {index + 1}")
+
+    if missing:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "ผลแปลงบางรูปหมดอายุแล้ว กรุณาแปลงรูปเหล่านั้นใหม่",
+                "missing": missing,
+            },
+        )
+
+    total = len(book_layout.plan_pages(len(masks), bp))
+
+    def work(progress: Progress) -> dict:
+        progress.note("กำลังสร้างหน้า")
+        return _build_pages_result(
+            masks, names, bp, lp, [], [],
+            on_page=lambda done, all_pages: progress.advance(f"สร้างหน้า {done} จาก {all_pages}"),
+        )
+
+    return _submit_job(work, total=total)
+
+
+@app.post("/api/jobs/pages")
+async def start_pages_job(
+    files: Annotated[list[UploadFile], File()],
+    lineart: Annotated[str | None, Form()] = None,
+    book: Annotated[str | None, Form()] = None,
+    captions: Annotated[str | None, Form()] = None,
+) -> JSONResponse:
+    """เริ่มรวมเล่มจากไฟล์ที่อัปโหลด (โหมดไม่แปลง) แปลงและสร้างหน้าในงานเบื้องหลัง"""
+    if not files:
+        raise HTTPException(status_code=400, detail="ยังไม่ได้เลือกภาพ")
+    _check_file_count(len(files))
+
+    lp = to_lineart_params(parse_json(lineart, LineArtPayload))
+    bp = to_book_params(parse_json(book, BookPayload))
+
+    try:
+        caption_list = json.loads(captions) if captions else []
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="รายการชื่อกำกับไม่ใช่ JSON ที่ถูกต้อง") from None
+    if not isinstance(caption_list, list):
+        raise HTTPException(status_code=400, detail="รายการชื่อกำกับต้องเป็น JSON array")
+
+    # อ่านไฟล์ให้ครบในคำขอนี้ (ตรวจชนิดและขนาดที่นี่ ผู้ใช้เห็นข้อผิดพลาดทันที)
+    uploads: list[tuple[str, bytes]] = []
+    for index, upload in enumerate(files):
+        raw = await read_upload(upload)
+        uploads.append((upload.filename or f"ภาพที่ {index + 1}", raw))
+
+    def work(progress: Progress) -> dict:
+        masks: list[np.ndarray] = []
+        names: list[str] = []
+        warnings: list[str] = []
+        skipped: list[str] = []
+        # ช่วงแรกนับตามจำนวนรูปที่ต้องอ่าน ช่วงหลังนับตามจำนวนหน้าที่ต้องสร้าง
+        progress.set_total(len(uploads))
+
+        for index, (name, raw) in enumerate(uploads):
+            progress.note(f"กำลังอ่านรูปที่ {index + 1} จาก {len(uploads)}")
+            try:
+                result, _, default_caption, warn = convert_uploaded(raw, name, lp)
+            except imgio.ImageLoadError as exc:
+                skipped.append(f"{name}: {exc}")
+                progress.advance()
+                continue
+            if result.is_empty:
+                skipped.append(f"{name}: ไม่พบเส้นในภาพ")
+                progress.advance()
+                continue
+
+            caption = default_caption
+            if index < len(caption_list) and isinstance(caption_list[index], str):
+                caption = caption_list[index].strip() or default_caption
+            masks.append(result.mask)
+            names.append(caption)
+            if warn:
+                warnings.append(f"{name}: {warn}")
+            progress.advance()
+
+        if not masks:
+            detail = "ไม่มีภาพใดที่ใช้ได้"
+            if skipped:
+                detail += " — " + "; ".join(skipped)
+            raise JobError(422, detail)
+
+        pages_total = len(book_layout.plan_pages(len(masks), bp))
+        read_total = len(uploads)
+        progress.set_total(read_total + pages_total)
+        return _build_pages_result(
+            masks, names, bp, lp, warnings, skipped,
+            on_page=lambda done, all_pages: progress.advance(f"สร้างหน้า {done} จาก {all_pages}"),
+        )
+
+    return _submit_job(work, total=len(uploads))
+
+
+@app.get("/api/jobs/{job_id}")
+def job_status(job_id: str) -> JSONResponse:
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="ไม่พบงานนี้แล้ว (เซิร์ฟเวอร์อาจรีสตาร์ทหรืองานหมดอายุ) กรุณากดรวมเล่มอีกครั้ง",
+        )
+    return JSONResponse(_JOBS.snapshot(job), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/jobs/{job_id}/result")
+def job_result(job_id: str) -> JSONResponse:
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="ผลของงานนี้หมดอายุแล้ว กรุณากดรวมเล่มอีกครั้ง",
+        )
+    if job.state == "error" and job.error:
+        raise HTTPException(status_code=job.error["status"], detail=job.error["detail"])
+    if job.state != "done":
+        raise HTTPException(status_code=409, detail="งานยังไม่เสร็จ")
+    return JSONResponse(job.result, headers={"Cache-Control": "no-store"})
 
 
 # --- หนังสือกิจกรรม: เขียนตามรอยประ, ฝึกลากเส้น, จับคู่ ------------------------
