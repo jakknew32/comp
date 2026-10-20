@@ -53,6 +53,7 @@ const dom = {
   frame: el("frame"), cover: el("cover"),
   caption: el("caption"), pagenum: el("pagenum"),
   previewBtn: el("previewBtn"), convertBtn: el("convertBtn"), bookBtn: el("bookBtn"),
+  videoBtn: el("videoBtn"), hookText: el("hookText"),
   busyAnim: el("busyAnim"), busyBarWrap: el("busyBarWrap"), busyBar: el("busyBar"),
   pagesCard: el("pagesCard"), pagesGrid: el("pagesGrid"),
   pagesCount: el("pagesCount"), printBtn: el("printBtn"),
@@ -165,11 +166,13 @@ function setBusy(busy, label) {
   dom.previewBtn.disabled = busy || !hasItems;
   dom.convertBtn.disabled = busy || !hasItems || dom.skipConvert.checked;
   dom.bookBtn.disabled = busy || !hasItems;
+  dom.videoBtn.disabled = busy || !hasItems;
   dom.actBtn.disabled = busy;
   dom.actBtn.textContent = busy && label === "activity" ? "⏳ กำลังสร้างหนังสือ..." : "📝 สร้างหนังสือกิจกรรม";
   dom.previewBtn.textContent = busy && label === "preview" ? "⏳ กำลังทำงาน..." : "👁️ ดูตัวอย่างหน้า A4";
   dom.convertBtn.textContent = busy && label === "convert" ? "⏳ กำลังแปลง..." : "✏️ 1. แปลงเป็นลายเส้น";
   dom.bookBtn.textContent = busy && label === "book" ? "⏳ กำลังรวมเล่ม..." : "📖 2. รวมเล่ม";
+  dom.videoBtn.textContent = busy && label === "video" ? "⏳ กำลังเรนเดอร์วิดีโอ..." : "🎬 3. สร้างวิดีโอ";
 }
 function renderItems() {
   dom.items.replaceChildren();
@@ -888,6 +891,50 @@ async function makeBook() {
   }
 }
 
+async function makeVideo() {
+  if (state.items.length === 0) return;
+  if (state.items.some((item) => !isConverted(item))) {
+    await convertAll();
+  }
+  let usable = state.items.filter((item) => isConverted(item));
+  if (usable.length === 0) {
+    setStatus("ไม่มีรูปที่แปลงสำเร็จ จึงสร้างวิดีโอไม่ได้", "error");
+    return;
+  }
+  setBusy(true, "video");
+  setStatus("⏳ กำลังเรนเดอร์วิดีโอ Affiliate (MP4)...");
+  try {
+    const body = new FormData();
+    for (const item of usable) {
+      body.append("files", item.file, item.name);
+    }
+    body.append("captions", JSON.stringify(usable.map((i) => i.caption)));
+    body.append("lineart", convertKey());
+    body.append("book", JSON.stringify(bookPayload()));
+    body.append("hook_text", dom.hookText.value || "🎨 สมุดระบายสีฝึกพัฒนาการเด็ก พิกัดลิงก์ใต้คลิป");
+
+    const response = await fetch("/api/video", { method: "POST", body });
+    if (!response.ok) {
+      setStatus(await readError(response), "error");
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "affiliate-promo.mp4";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus("✅ สร้างและดาวน์โหลดวิดีโอโปรโมท Affiliate สำเร็จแล้ว!");
+  } catch (_) {
+    setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จขณะสร้างวิดีโอ", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
 /* ---------- แท็บหนังสือกิจกรรม ---------- */
 const PREWRITING = [
   ["vertical", "เส้นตรงตั้ง"], ["horizontal", "เส้นตรงนอน"], ["slant", "เส้นเฉียง"],
@@ -1142,6 +1189,7 @@ function init() {
   dom.previewBtn.addEventListener("click", preview);
   dom.convertBtn.addEventListener("click", convertAll);
   dom.bookBtn.addEventListener("click", makeBook);
+  dom.videoBtn.addEventListener("click", makeVideo);
   dom.printBtn.addEventListener("click", printPages);
   // เปลี่ยนค่าที่มีผลกับการแปลง → ป้าย "แปลงแล้ว" ของรูปต้องอัปเดต
   dom.skipConvert.addEventListener("change", () => {

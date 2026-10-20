@@ -270,6 +270,12 @@
                 <button type="button" id="convertBtn" disabled class="btn btn-secondary">✏️ 1. แปลงเป็นลายเส้น</button>
                 <button type="button" id="bookBtn" disabled class="btn btn-primary btn-lg">📖 2. รวมเล่ม</button>
               </div>
+              <div class="actions" style="margin-top: 12px; display: flex; gap: 10px; align-items: flex-end;">
+                <label class="field" style="flex: 1;"><span class="field-label">ข้อความพาดหัววิดีโอ (Hook)</span>
+                  <input type="text" id="hookText" maxlength="100" placeholder="🎨 สมุดระบายสีฝึกพัฒนาการเด็ก พิกัดลิงก์ใต้คลิป" value="🎨 สมุดระบายสีฝึกพัฒนาการเด็ก พิกัดลิงก์ใต้คลิป">
+                </label>
+                <button type="button" id="videoBtn" disabled class="btn btn-success btn-lg">🎬 3. สร้างวิดีโอ</button>
+              </div>
               <p class="hint">แปลงรูปก่อน แล้วค่อยรวมเล่ม — ปรับค่าการจัดหน้า (ชื่อสมุด ปก เลขหน้า จำนวนภาพต่อหน้า) แล้วกดรวมเล่มซ้ำได้โดยไม่ต้องแปลงรูปใหม่</p>
               <p id="status" class="status" role="status" aria-live="polite"></p>
               <div id="busyAnim" class="busy-anim" hidden aria-hidden="true">

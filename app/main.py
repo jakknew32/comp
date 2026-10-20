@@ -31,6 +31,7 @@ from .jobs import JobBusy, JobError, JobStore, Progress
 from .book import activity as book_activity
 from .book import layout as book_layout
 from .book import pdf as book_pdf
+from .book import video as book_video
 from .config import (
     GRID_OPTIONS,
     MAX_FILES_PER_REQUEST,
@@ -451,6 +452,98 @@ async def make_book(
             "Content-Disposition": f'attachment; filename="{filename}.pdf"',
             "X-Page-Count": str(result.page_count),
             "X-Warnings": _encode_header(all_warnings),
+        },
+    )
+
+
+@app.post("/api/video")
+async def make_affiliate_video(
+    files: Annotated[list[UploadFile], File()],
+    lineart: Annotated[str | None, Form()] = None,
+    book: Annotated[str | None, Form()] = None,
+    captions: Annotated[str | None, Form()] = None,
+    hook_text: Annotated[str | None, Form()] = None,
+) -> Response:
+    """สร้างวิดีโอ Affiliate Slideshow (MP4) จากไฟล์ภาพที่อัปโหลด"""
+    if not files:
+        raise HTTPException(status_code=400, detail="ยังไม่ได้เลือกภาพ")
+    _check_file_count(len(files))
+
+    lp = to_lineart_params(parse_json(lineart, LineArtPayload))
+    bp = to_book_params(parse_json(book, BookPayload))
+
+    try:
+        caption_list = json.loads(captions) if captions else []
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="รายการชื่อกำกับไม่ใช่ JSON ที่ถูกต้อง") from None
+
+    masks: list[np.ndarray] = []
+    caps: list[str] = []
+    warnings: list[str] = []
+    skipped: list[str] = []
+
+    for index, upload in enumerate(files):
+        raw = await read_upload(upload)
+        name = upload.filename or f"ภาพที่ {index + 1}"
+        try:
+            result, _, default_caption, warn = await run_in_threadpool(
+                convert_uploaded, raw, name, lp
+            )
+        except imgio.ImageLoadError as exc:
+            skipped.append(f"{name}: {exc}")
+            continue
+
+        if result.is_empty:
+            skipped.append(f"{name}: ไม่พบเส้นในภาพ")
+            continue
+
+        caption = default_caption
+        if index < len(caption_list) and isinstance(caption_list[index], str):
+            caption = caption_list[index].strip() or default_caption
+
+        masks.append(result.mask)
+        caps.append(caption)
+        if warn:
+            warnings.append(f"{name}: {warn}")
+
+    if not masks:
+        raise HTTPException(status_code=422, detail="ไม่มีภาพใดที่ใช้ได้")
+
+    pil_pages, page_warnings = await run_in_threadpool(
+        book_pdf.build_pages, masks, caps, bp, lp
+    )
+    for warn in page_warnings:
+        if warn not in warnings:
+            warnings.append(warn)
+
+    np_pages = [np.array(p) for p in pil_pages]
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+
+    hook = (hook_text or "").strip() or f"🎨 {bp.title} — ฝึกพัฒนาการเด็ก"
+
+    try:
+        await run_in_threadpool(
+            book_video.create_affiliate_video,
+            np_pages,
+            tmp_path,
+            hook_text=hook,
+        )
+        video_bytes = tmp_path.read_bytes()
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+    filename = imgio.slugify(f"{bp.title}-affiliate-video", fallback="affiliate-video")
+
+    return Response(
+        content=video_bytes,
+        media_type="video/mp4",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}.mp4"',
+            "X-Warnings": _encode_header(warnings),
         },
     )
 
