@@ -156,7 +156,7 @@ def test_hf_old_alias_maps_to_text2image_model(fake_hf) -> None:
 def test_hf_all_models_gone_gives_actionable_message(fake_hf) -> None:
     fake_hf.script = {"*": _hf_http_error(410, "deprecated")}
     result = generate.generate_image(
-        "แมว", None, _hf_settings(), provider="huggingface"
+        "แมว", None, _hf_settings(allow_fallback=False), provider="huggingface"
     )
     assert not result.ok
     assert "AI_PROVIDER=gemini" in result.note
@@ -170,7 +170,7 @@ def test_hf_fatal_errors_stop_immediately_with_clear_message(
     fake_hf, status: int, fragment: str
 ) -> None:
     fake_hf.script = {"*": _hf_http_error(status, "x")}
-    result = generate.generate_image("แมว", None, _hf_settings(), provider="huggingface")
+    result = generate.generate_image("แมว", None, _hf_settings(allow_fallback=False), provider="huggingface")
     assert not result.ok
     assert fragment in result.note
     assert len(fake_hf.calls) == 1  # ไม่ลองโมเดลอื่นต่อ เพราะปัญหาอยู่ที่ token/เครดิต
@@ -180,6 +180,6 @@ def test_hf_missing_library_gives_clear_message(monkeypatch) -> None:
     import sys
 
     monkeypatch.setitem(sys.modules, "huggingface_hub", None)
-    result = generate.generate_image("แมว", None, _hf_settings(), provider="huggingface")
+    result = generate.generate_image("แมว", None, _hf_settings(allow_fallback=False), provider="huggingface")
     assert not result.ok
     assert "huggingface_hub" in result.note
